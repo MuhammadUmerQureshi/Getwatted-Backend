@@ -2,14 +2,43 @@ from fastapi import FastAPI
 from app.api.routes import router as api_router
 from app.ws.websocket_handler import websocket_endpoint
 from contextlib import asynccontextmanager
+from app.db.database import init_db
+import logging
+
+# Configure logger
+logger = logging.getLogger("ocpp-server")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    import logging
-    logging.getLogger("ocpp-server").info("OCPP Server starting up")
-    yield
+    """
+    Application lifecycle events.
+    This runs when the application starts, initializes the database,
+    and executes any cleanup when the server shuts down.
+    """
+    try:
+        # Initialize database
+        logger.info("🔄 Initializing database...")
+        init_db()
+        logger.info("✅ Database initialization complete")
+        
+        # Application startup
+        logger.info("🚀 OCPP Server starting up")
+        yield
+        # Application shutdown
+        logger.info("👋 OCPP Server shutting down")
+    except Exception as e:
+        logger.error(f"❌ Error during application startup: {str(e)}", exc_info=True)
+        raise
 
-app = FastAPI(title="OCPP Central System Server", lifespan=lifespan)
+app = FastAPI(
+    title="OCPP Central System Server", 
+    description="OCPP server with company, site, and charger management",
+    version="1.0.0",
+    lifespan=lifespan
+)
 
+# Include routers
 app.include_router(api_router)
+
+# Add WebSocket endpoint
 app.add_api_websocket_route("/api/v1/cs/{charge_point_id}", websocket_endpoint)
