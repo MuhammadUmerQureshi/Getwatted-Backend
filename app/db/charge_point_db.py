@@ -81,6 +81,14 @@ def update_charger_on_boot(charger_name, charger_details):
             update_fields.append("ChargerFirmwareVersion = ?")
             params.append(charger_details['firmware_version'])
             
+        if charger_details.get('charger_meter'):
+            update_fields.append("ChargerMeter = ?")
+            params.append(charger_details['charger_meter'])
+            
+        if charger_details.get('charger_meter_serial'):
+            update_fields.append("ChargerMeterSerial = ?")
+            params.append(charger_details['charger_meter_serial'])
+            
         # Always update these fields
         update_fields.append("ChargerIsOnline = ?")
         params.append(1)
@@ -124,10 +132,10 @@ def update_charger_heartbeat(charger_name, timestamp):
         execute_update(
             """
             UPDATE Chargers
-            SET ChargerLastHeartbeat = ?, ChargerIsOnline = ?, ChargerUpdated = ?
+            SET ChargerLastHeartbeat = ?, ChargerIsOnline = ?
             WHERE ChargerName = ?
             """,
-            (timestamp, 1, timestamp, charger_name)
+            (timestamp, 1, charger_name)
         )
         return True
     

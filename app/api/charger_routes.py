@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, time
 import logging
 
 from app.models.charger import Charger, ChargerCreate, ChargerUpdate, Connector, ConnectorCreate, ConnectorUpdate
@@ -58,6 +58,7 @@ async def get_chargers(
 async def get_charger(charger_id: int, company_id: int, site_id: int):
     """Get details of a specific charger by ID."""
     try:
+    
         charger = execute_query(
             "SELECT * FROM Chargers WHERE ChargerId = ? AND ChargerCompanyId = ? AND ChargerSiteId = ?", 
             (charger_id, company_id, site_id)
@@ -201,6 +202,9 @@ async def update_charger(charger_id: int, company_id: int, site_id: int, charger
                 # Convert boolean to integer for SQLite
                 if isinstance(value, bool):
                     value = 1 if value else 0
+                # Convert datetime.time to string
+                if isinstance(value, time):
+                    value = value.strftime('%H:%M:%S')
                 update_fields.append(f"{field} = ?")
                 params.append(value)
                 

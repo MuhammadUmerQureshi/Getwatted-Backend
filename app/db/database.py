@@ -168,3 +168,4 @@ def init_db():
     except (sqlite3.Error, IOError) as e:
         logger.error(f"❌ DATABASE INITIALIZATION ERROR: {str(e)}")
         return False
+    

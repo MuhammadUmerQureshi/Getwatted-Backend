@@ -85,22 +85,26 @@ class ChargePoint16(cp):
                 'charger_model': kwargs.get('charge_point_model'),
                 'charger_serial': kwargs.get('charge_point_serial_number'),
                 'firmware_version': kwargs.get('firmware_version'),
+                'charger_meter_serial': kwargs.get('meter_serial_number'),
+                'charger_meter': kwargs.get('meter_type'),
+
             }
             
             # Update charger details in database
             update_charger_on_boot(self.id, charger_details)
             
             # Get charger info for logging event
-            charger_info = get_charger_info(self.id)
-            if charger_info:
-                # Log boot notification event
-                log_event(
-                    charger_info,
-                    event_type="BootNotification",
-                    data=kwargs,
-                    connector_id=None,
-                    session_id=None
-                )
+            # Dont need to log BootNotification in EventsData
+            #charger_info = get_charger_info(self.id)
+            # if charger_info:
+            #     # Log boot notification event
+            #     log_event(
+            #         charger_info,
+            #         event_type="BootNotification",
+            #         data=kwargs,
+            #         connector_id=None,
+            #         session_id=None
+            #     )
                 
         except Exception as e:
             logger.error(f"❌ DATABASE ERROR: Failed to update boot notification details for {self.id}: {str(e)}")
@@ -135,9 +139,9 @@ class ChargePoint16(cp):
         logger.info(f"📊 DETAILS: connector_id={kwargs.get('connector_id', 'N/A')}, status={kwargs.get('status', 'N/A')}, error_code={kwargs.get('error_code', 'N/A')}")
         
         try:
-            now = datetime.now().isoformat()
-            connector_id = kwargs.get('connector_id')
-            status = kwargs.get('status')
+            #now = datetime.now().isoformat() # Time for reporting connector status
+            connector_id = kwargs.get('connector_id') 
+            status = kwargs.get('status') # Only need to update connector status
             
             # Get charger info from database
             charger_info = get_charger_info(self.id)
@@ -150,13 +154,14 @@ class ChargePoint16(cp):
                 update_connector_status(charger_info, connector_id, status)
             
             # Log status notification event
-            log_event(
-                charger_info, 
-                event_type="StatusNotification", 
-                data=kwargs,
-                connector_id=connector_id,
-                session_id=None
-            )
+            # Dont need to log status notification in EventsData table in database
+            # log_event(
+            #     charger_info, 
+            #     event_type="StatusNotification", 
+            #     data=kwargs,
+            #     connector_id=connector_id,
+            #     session_id=None
+            # )
             
         except Exception as e:
             logger.error(f"❌ DATABASE ERROR: Failed to update status for {self.id}: {str(e)}")
