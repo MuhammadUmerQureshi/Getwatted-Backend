@@ -583,7 +583,7 @@ class ChargePoint16(cp):
             # No id tag provided
             
             # Default response value
-            # status = AuthorizationStatus.accepted
+            status = AuthorizationStatus.accepted
             
             # Get charger info from database
             charger_info = get_charger_info(self.id)
