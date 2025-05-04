@@ -275,60 +275,60 @@ def log_event(charger_info, event_type, data, connector_id=None, session_id=None
         logger.error(f"❌ DATABASE ERROR: Failed to log event: {str(e)}")
         return None
 
-def check_rfid_authorization(id_tag, charger_info):
-    """
-    Check if an RFID card is authorized to use the charger.
+# def check_rfid_authorization(id_tag, charger_info):
+#     """
+#     Check if an RFID card is authorized to use the charger.
     
-    Args:
-        id_tag (str): The RFID card ID
-        charger_info (dict): Dictionary with charger_id, company_id, site_id
+#     Args:
+#         id_tag (str): The RFID card ID
+#         charger_info (dict): Dictionary with charger_id, company_id, site_id
         
-    Returns:
-        str: Authorization status (from ocpp.v16.enums.AuthorizationStatus)
-    """
-    from ocpp.v16.enums import AuthorizationStatus
+#     Returns:
+#         str: Authorization status (from ocpp.v16.enums.AuthorizationStatus)
+#     """
+#     from ocpp.v16.enums import AuthorizationStatus
     
-    try:
-        company_id = charger_info['company_id']
-        site_id = charger_info['site_id']
+#     try:
+#         company_id = charger_info['company_id']
+#         site_id = charger_info['site_id']
         
-        # Check if RFID card exists and is enabled
-        rfid_card = execute_query(
-            "SELECT RFIDCardDriverId, RFIDCardEnabled FROM RFIDCards WHERE RFIDCardId = ?",
-            (id_tag,)
-        )
+#         # Check if RFID card exists and is enabled
+#         rfid_card = execute_query(
+#             "SELECT RFIDCardDriverId, RFIDCardEnabled FROM RFIDCards WHERE RFIDCardId = ?",
+#             (id_tag,)
+#         )
         
-        if rfid_card:
-            if not rfid_card[0]["RFIDCardEnabled"]:
-                logger.info(f"🚫 Authorization rejected: RFID card {id_tag} is blocked")
-                return AuthorizationStatus.blocked
+#         if rfid_card:
+#             if not rfid_card[0]["RFIDCardEnabled"]:
+#                 logger.info(f"🚫 Authorization rejected: RFID card {id_tag} is blocked")
+#                 return AuthorizationStatus.blocked
                 
-            driver_id = rfid_card[0]["RFIDCardDriverId"]
+#             driver_id = rfid_card[0]["RFIDCardDriverId"]
             
-            # Check if driver is allowed to use chargers at this site
-            permission = execute_query(
-                """
-                SELECT ChargerUsePermitEnabled FROM ChargerUsePermit
-                WHERE ChargerUsePermitDriverId = ? AND ChargerUsePermitSiteId = ? AND
-                      ChargerUsePermitCompanyId = ?
-                """,
-                (driver_id, site_id, company_id)
-            )
+#             # Check if driver is allowed to use chargers at this site
+#             permission = execute_query(
+#                 """
+#                 SELECT ChargerUsePermitEnabled FROM ChargerUsePermit
+#                 WHERE ChargerUsePermitDriverId = ? AND ChargerUsePermitSiteId = ? AND
+#                       ChargerUsePermitCompanyId = ?
+#                 """,
+#                 (driver_id, site_id, company_id)
+#             )
             
-            if permission and not permission[0]["ChargerUsePermitEnabled"]:
-                logger.info(f"🚫 Authorization rejected: Driver {driver_id} not permitted at site {site_id}")
-                return AuthorizationStatus.blocked
-        else:
-            # RFID card not found in database
-            # You can set this to rejected if you want to only allow registered cards
-            # return AuthorizationStatus.invalid
-            logger.info(f"⚠️ Authorization warning: RFID card {id_tag} not in database")
+#             if permission and not permission[0]["ChargerUsePermitEnabled"]:
+#                 logger.info(f"🚫 Authorization rejected: Driver {driver_id} not permitted at site {site_id}")
+#                 return AuthorizationStatus.blocked
+#         else:
+#             # RFID card not found in database
+#             # You can set this to rejected if you want to only allow registered cards
+#             # return AuthorizationStatus.invalid
+#             logger.info(f"⚠️ Authorization warning: RFID card {id_tag} not in database")
             
-        return AuthorizationStatus.accepted
+#         return AuthorizationStatus.accepted
         
-    except Exception as e:
-        logger.error(f"❌ DATABASE ERROR: Failed to check RFID authorization: {str(e)}")
-        return AuthorizationStatus.accepted
+#     except Exception as e:
+#         logger.error(f"❌ DATABASE ERROR: Failed to check RFID authorization: {str(e)}")
+#         return AuthorizationStatus.accepted
 
 def create_charge_session(charger_info, id_tag, connector_id, timestamp):
     """
@@ -452,6 +452,60 @@ def get_meter_start_value(transaction_id):
     except Exception as e:
         logger.error(f"❌ DATABASE ERROR: Failed to get meter start value: {str(e)}")
         return 0
+
+def check_rfid_authorization(id_tag, charger_info):
+    """
+    Check if an RFID card is authorized to use the charger.
+    
+    Args:
+        id_tag (str): The RFID card ID
+        charger_info (dict): Dictionary with charger_id, company_id, site_id
+        
+    Returns:
+        str: Authorization status (from ocpp.v16.enums.AuthorizationStatus)
+    """
+    from ocpp.v16.enums import AuthorizationStatus
+    
+    try:
+        company_id = charger_info['company_id']
+        site_id = charger_info['site_id']
+        
+        # Check if RFID card exists and is enabled
+        rfid_card = execute_query(
+            "SELECT RFIDCardDriverId, RFIDCardEnabled FROM RFIDCards WHERE RFIDCardId = ?",
+            (id_tag,)
+        )
+        
+        if not rfid_card:
+            logger.info(f"🚫 Authorization rejected: RFID card {id_tag} not found in database")
+            return AuthorizationStatus.invalid
+            
+        if not rfid_card[0]["RFIDCardEnabled"]:
+            logger.info(f"🚫 Authorization rejected: RFID card {id_tag} is blocked")
+            return AuthorizationStatus.blocked
+                
+        driver_id = rfid_card[0]["RFIDCardDriverId"]
+            
+        # Check if driver is allowed to use chargers at this site
+        permission = execute_query(
+            """
+            SELECT ChargerUsePermitEnabled FROM ChargerUsePermit
+            WHERE ChargerUsePermitDriverId = ? AND ChargerUsePermitSiteId = ? AND
+                  ChargerUsePermitCompanyId = ?
+            """,
+            (driver_id, site_id, company_id)
+        )
+            
+        if permission and not permission[0]["ChargerUsePermitEnabled"]:
+            logger.info(f"🚫 Authorization rejected: Driver {driver_id} not permitted at site {site_id}")
+            return AuthorizationStatus.blocked
+        
+        logger.info(f"✅ Authorization accepted: RFID card {id_tag} for driver {driver_id}")
+        return AuthorizationStatus.accepted
+        
+    except Exception as e:
+        logger.error(f"❌ DATABASE ERROR: Failed to check RFID authorization: {str(e)}")
+        return AuthorizationStatus.invalid
 
 def update_charge_session_on_stop(transaction_id, timestamp, duration_seconds, reason, energy_kwh):
     """

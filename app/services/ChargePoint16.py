@@ -168,6 +168,96 @@ class ChargePoint16(cp):
         
         return call_result.StatusNotification()
 
+    # @on(Action.meter_values)  
+    # def on_meter_values(self, **kwargs):
+    #     logger.info(f"📈 RECEIVED: MeterValues from {self.id}")
+    #     logger.info(f"📈 DETAILS: connector_id={kwargs.get('connector_id', 'N/A')}, transaction_id={kwargs.get('transaction_id', 'N/A')}")
+        
+    #     try:
+    #         now = datetime.now().isoformat()
+    #         connector_id = kwargs.get('connector_id')
+    #         transaction_id = kwargs.get('transaction_id')
+            
+    #         # Get charger info from database
+    #         charger_info = get_charger_info(self.id)
+    #         if not charger_info:
+    #             logger.error(f"❌ Charger {self.id} not found in database")
+    #             return call_result.MeterValues()
+            
+    #         # Log meter values in detail if available
+    #         if 'meter_value' in kwargs:
+    #             for meter_val in kwargs['meter_value']:
+    #                 timestamp = meter_val.get('timestamp', now)
+    #                 for sample in meter_val.get('sampled_value', []):
+    #                     value = sample.get('value', 'N/A')
+    #                     unit = sample.get('unit', 'N/A')
+    #                     measurand = sample.get('measurand', 'N/A')
+    #                     logger.info(f"📈 METER READING: {value} {unit} ({measurand}) at {timestamp}")
+                        
+    #                     # Parse value as float if possible
+    #                     try:
+    #                         parsed_value = float(value)
+                            
+    #                         # Prepare meter data
+    #                         meter_data = {
+    #                             'timestamp': timestamp,
+    #                             'sample': sample,
+    #                             'meter_value': None,
+    #                             'current': None,
+    #                             'voltage': None,
+    #                             'temperature': None
+    #                         }
+                            
+    #                         # Store in appropriate field based on measurand
+    #                         if measurand == 'Energy.Active.Import.Register' or measurand == 'Energy.Active.Import.Interval':
+    #                             meter_data['meter_value'] = parsed_value
+    #                         elif measurand == 'Current.Import':
+    #                             meter_data['current'] = parsed_value
+    #                         elif measurand == 'Voltage':
+    #                             meter_data['voltage'] = parsed_value
+    #                         elif measurand == 'Temperature':
+    #                             meter_data['temperature'] = parsed_value
+    #                         else:
+    #                             # Default to meter value for other measurands
+    #                             meter_data['meter_value'] = parsed_value
+                            
+    #                         # Log meter values event
+    #                         log_event(
+    #                             charger_info,
+    #                             event_type="MeterValues",
+    #                             data=meter_data,
+    #                             connector_id=connector_id,
+    #                             session_id=transaction_id,
+    #                             timestamp=timestamp,
+    #                             meter_value=meter_data['meter_value'],
+    #                             temperature=meter_data['temperature'],
+    #                             current=meter_data['current'],
+    #                             voltage=meter_data['voltage']
+    #                         )
+    #                         logger.info(f"✅ METER VALUE LOGGED: {self.id}, connector {connector_id}, value {value} {unit}")
+                            
+    #                     except (ValueError, TypeError):
+    #                         # If value cannot be parsed as float, just log it in the data field
+    #                         log_event(
+    #                             charger_info,
+    #                             event_type="MeterValues",
+    #                             data=sample,
+    #                             connector_id=connector_id,
+    #                             session_id=transaction_id,
+    #                             timestamp=timestamp
+    #                         )
+                            
+    #     except Exception as e:
+    #         logger.error(f"❌ DATABASE ERROR: Failed to process meter values for {self.id}: {str(e)}")
+        
+    #     logger.info(f"📈 RESPONSE: MeterValues.conf")
+    #     return call_result.MeterValues()
+
+
+
+
+    #     # Modified on_meter_values method for app/services/ChargePoint16.py
+    
     @on(Action.meter_values)
     def on_meter_values(self, **kwargs):
         logger.info(f"📈 RECEIVED: MeterValues from {self.id}")
@@ -184,10 +274,28 @@ class ChargePoint16(cp):
                 logger.error(f"❌ Charger {self.id} not found in database")
                 return call_result.MeterValues()
             
-            # Log meter values in detail if available
+            # Process meter values in detail
             if 'meter_value' in kwargs:
                 for meter_val in kwargs['meter_value']:
                     timestamp = meter_val.get('timestamp', now)
+                    
+                    # Check for active session if no transaction_id provided
+                    if transaction_id is None and connector_id is not None:
+                        # Get active session for this connector
+                        active_session = execute_query(
+                            """
+                            SELECT ChargeSessionId FROM ChargeSessions 
+                            WHERE ChargerSessionChargerId = ? AND ChargerSessionCompanyId = ? 
+                            AND ChargerSessionSiteId = ? AND ChargerSessionConnectorId = ?
+                            AND ChargerSessionEnd IS NULL
+                            """,
+                            (charger_info['charger_id'], charger_info['company_id'], charger_info['site_id'], connector_id)
+                        )
+                        
+                        if active_session:
+                            transaction_id = active_session[0]["ChargeSessionId"]
+                            logger.info(f"📊 Found active session {transaction_id} for connector {connector_id}")
+                    
                     for sample in meter_val.get('sampled_value', []):
                         value = sample.get('value', 'N/A')
                         unit = sample.get('unit', 'N/A')
@@ -211,6 +319,36 @@ class ChargePoint16(cp):
                             # Store in appropriate field based on measurand
                             if measurand == 'Energy.Active.Import.Register' or measurand == 'Energy.Active.Import.Interval':
                                 meter_data['meter_value'] = parsed_value
+                                
+                                # Update session energy if this is an active session
+                                if transaction_id:
+                                    try:
+                                        # Get the session
+                                        session = execute_query(
+                                            "SELECT ChargerSessionStart FROM ChargeSessions WHERE ChargeSessionId = ?",
+                                            (transaction_id,)
+                                        )
+                                        
+                                        if session:
+                                            # Calculate running energy for live update
+                                            # This doesn't replace the final calculation on session end
+                                            start_meter = get_meter_start_value(transaction_id)
+                                            current_energy = (parsed_value - start_meter) / 1000.0  # Wh to kWh
+                                            
+                                            if current_energy > 0:
+                                                # Update running energy in session
+                                                execute_update(
+                                                    """
+                                                    UPDATE ChargeSessions 
+                                                    SET ChargerSessionEnergyKWH = ? 
+                                                    WHERE ChargeSessionId = ?
+                                                    """,
+                                                    (current_energy, transaction_id)
+                                                )
+                                                logger.info(f"✅ Updated session {transaction_id} with energy {current_energy} kWh")
+                                    except Exception as e:
+                                        logger.error(f"❌ Error updating session energy: {str(e)}")
+                                
                             elif measurand == 'Current.Import':
                                 meter_data['current'] = parsed_value
                             elif measurand == 'Voltage':
@@ -252,6 +390,52 @@ class ChargePoint16(cp):
         
         logger.info(f"📈 RESPONSE: MeterValues.conf")
         return call_result.MeterValues()
+    
+    # @on(Action.authorize)
+    # def on_authorize(self, **kwargs):
+    #     logger.info(f"🔑 RECEIVED: Authorization request from {self.id}")
+    #     logger.info(f"🔑 DETAILS: id_tag={kwargs.get('id_tag', 'N/A')}")
+        
+    #     # Handle authorization against database
+    #     try:
+    #         id_tag = kwargs.get('id_tag')
+    #         now = datetime.now().isoformat()
+            
+    #         # Default authorization status
+    #         authorization_status = AuthorizationStatus.accepted
+            
+    #         # Get charger info from database
+    #         charger_info = get_charger_info(self.id)
+    #         if not charger_info:
+    #             logger.error(f"❌ Charger {self.id} not found in database")
+    #             return call_result.Authorize(id_tag_info=IdTagInfo(status=authorization_status))
+            
+    #         # Check if RFID card is authorized
+    #         if id_tag:
+    #             authorization_status = check_rfid_authorization(id_tag, charger_info)
+            
+    #         # Log authorization event
+    #         log_event(
+    #             charger_info,
+    #             event_type="Authorize",
+    #             data={"id_tag": id_tag, "status": authorization_status},
+    #             connector_id=None,
+    #             session_id=None
+    #         )
+    #         logger.info(f"✅ EVENT LOGGED: Authorization for {self.id}, RFID {id_tag}, status {authorization_status}")
+            
+    #     except Exception as e:
+    #         logger.error(f"❌ DATABASE ERROR: Failed to process authorization for {self.id}: {str(e)}")
+    #         # Default to accepted if there's a database error
+    #         authorization_status = AuthorizationStatus.accepted
+        
+    #     status = authorization_status
+    #     logger.info(f"🔑 RESPONSE: Authorize.conf with status={status}")
+    #     return call_result.Authorize(
+    #         id_tag_info=IdTagInfo(
+    #             status=status
+    #         )
+    #     )
 
     @on(Action.authorize)
     def on_authorize(self, **kwargs):
@@ -263,8 +447,8 @@ class ChargePoint16(cp):
             id_tag = kwargs.get('id_tag')
             now = datetime.now().isoformat()
             
-            # Default authorization status
-            authorization_status = AuthorizationStatus.accepted
+            # Default authorization status is rejected (changed from accepted)
+            authorization_status = AuthorizationStatus.invalid
             
             # Get charger info from database
             charger_info = get_charger_info(self.id)
@@ -272,11 +456,34 @@ class ChargePoint16(cp):
                 logger.error(f"❌ Charger {self.id} not found in database")
                 return call_result.Authorize(id_tag_info=IdTagInfo(status=authorization_status))
             
-            # Check if RFID card is authorized
+            # Check if RFID card exists in database
             if id_tag:
-                authorization_status = check_rfid_authorization(id_tag, charger_info)
+                # Query the database for the RFID card
+                rfid_card = execute_query(
+                    "SELECT RFIDCardId, RFIDCardEnabled FROM RFIDCards WHERE RFIDCardId = ?",
+                    (id_tag,)
+                )
+                
+                if rfid_card:
+                    # RFID card exists in database
+                    if rfid_card[0]["RFIDCardEnabled"]:
+                        # RFID card is enabled, check for additional permissions
+                        authorization_status = check_rfid_authorization(id_tag, charger_info)
+                    else:
+                        # RFID card is disabled
+                        authorization_status = AuthorizationStatus.blocked
+                        logger.info(f"🚫 Authorization rejected: RFID card {id_tag} is blocked")
+                else:
+                    # RFID card not found in database
+                    authorization_status = AuthorizationStatus.invalid
+                    logger.info(f"🚫 Authorization rejected: RFID card {id_tag} not in database")
+            else:
+                # No ID tag provided
+                authorization_status = AuthorizationStatus.invalid
+                logger.info(f"🚫 Authorization rejected: No RFID card ID provided")
             
             # Log authorization event
+            # Do we need to log this in EventsData table?
             log_event(
                 charger_info,
                 event_type="Authorize",
@@ -288,8 +495,8 @@ class ChargePoint16(cp):
             
         except Exception as e:
             logger.error(f"❌ DATABASE ERROR: Failed to process authorization for {self.id}: {str(e)}")
-            # Default to accepted if there's a database error
-            authorization_status = AuthorizationStatus.accepted
+            # Default to rejected if there's a database error
+            authorization_status = AuthorizationStatus.invalid
         
         status = authorization_status
         logger.info(f"🔑 RESPONSE: Authorize.conf with status={status}")
@@ -311,16 +518,22 @@ class ChargePoint16(cp):
             connector_id = kwargs.get('connector_id')
             meter_start = kwargs.get('meter_start', 0)
             timestamp = kwargs.get('timestamp', now)
+            # No reservation id
             
             # Default response values
-            transaction_id = 1
-            status = AuthorizationStatus.accepted
+            # transaction_id = 1
+            # status = AuthorizationStatus.accepted
             
             # Get charger info from database
             charger_info = get_charger_info(self.id)
-            if not charger_info:
-                logger.error(f"❌ Charger {self.id} not found in database")
-                return call_result.StartTransaction(transaction_id=transaction_id, id_tag_info=IdTagInfo(status=status))
+            status = check_rfid_authorization(id_tag=id_tag, charger_info=charger_info)
+
+            # Do i need to check charger info every time
+
+
+            # if not charger_info:
+            #     logger.error(f"❌ Charger {self.id} not found in database")
+            #     return call_result.StartTransaction(transaction_id=transaction_id, id_tag_info=IdTagInfo(status=status))
             
             # Create new charge session and get transaction ID
             transaction_id = create_charge_session(charger_info, id_tag, connector_id, timestamp)
@@ -344,8 +557,9 @@ class ChargePoint16(cp):
         except Exception as e:
             logger.error(f"❌ DATABASE ERROR: Failed to process start transaction for {self.id}: {str(e)}")
             # Default values if database error
+            # Should i need to accept transaction in case it is not verified from the database
             transaction_id = 1
-            status = AuthorizationStatus.accepted
+            status = AuthorizationStatus.invalid
         
         id_tag_info = IdTagInfo(status=status)
         logger.info(f"▶️ RESPONSE: StartTransaction.conf with transaction_id={transaction_id}, status={status}")
@@ -366,15 +580,16 @@ class ChargePoint16(cp):
             meter_stop = kwargs.get('meter_stop', 0)
             timestamp = kwargs.get('timestamp', now)
             reason = kwargs.get('reason')
+            # No id tag provided
             
             # Default response value
-            status = AuthorizationStatus.accepted
+            # status = AuthorizationStatus.accepted
             
             # Get charger info from database
             charger_info = get_charger_info(self.id)
-            if not charger_info:
-                logger.error(f"❌ Charger {self.id} not found in database")
-                return call_result.StopTransaction(id_tag_info=IdTagInfo(status=status))
+            # if not charger_info:
+            #     logger.error(f"❌ Charger {self.id} not found in database")
+            #     return call_result.StopTransaction(id_tag_info=IdTagInfo(status=status))
             
             # Get session info
             session_info = get_charge_session_info(transaction_id)
