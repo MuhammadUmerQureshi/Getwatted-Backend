@@ -33,6 +33,7 @@ async def websocket_endpoint(websocket: WebSocket, charge_point_id: str):
     
     if "ocpp1.6" not in requested_protocols:
         logger.error(f"❌ PROTOCOL ERROR | {charge_point_id} | Missing OCPP1.6 protocol | Available: {requested_protocols}")
+        await websocket.close(code=1002, reason="Protocol not supported")  # Use standard close code
         return
     
     # Verify charger exists in database using ChargerName
@@ -66,14 +67,22 @@ async def websocket_endpoint(websocket: WebSocket, charge_point_id: str):
                 logger.info(f"🔄 UPDATED CHARGE POINT ID TO: '{charge_point_id}'")
             else:
                 logger.error(f"❌ CHARGER NOT FOUND EVEN WITH CASE-INSENSITIVE SEARCH")
-                await websocket.close(code=4001, reason="Charger not registered in system")
+                # First accept the connection, then close it properly
+                await websocket.accept(subprotocol="ocpp1.6")
+                logger.info(f"✅ CONNECTION TEMPORARILY ACCEPTED FOR REJECTION | {charge_point_id}")
+                await websocket.close(code=1000, reason="Charger not registered in system")
+                logger.info(f"🔌 CONNECTION PROPERLY CLOSED | {charge_point_id}")
                 return
         else:
             logger.info(f"✅ CHARGER FOUND: {json.dumps([dict(c) for c in charger])}")
         
         if not charger[0]["ChargerEnabled"]:
             logger.error(f"❌ CHARGER VERIFICATION FAILED | {charge_point_id} | Charger is disabled in database")
-            await websocket.close(code=4002, reason="Charger is disabled")
+            # First accept the connection, then close it properly
+            await websocket.accept(subprotocol="ocpp1.6")
+            logger.info(f"✅ CONNECTION TEMPORARILY ACCEPTED FOR REJECTION | {charge_point_id}")
+            await websocket.close(code=1000, reason="Charger is disabled")
+            logger.info(f"🔌 CONNECTION PROPERLY CLOSED | {charge_point_id}")
             return
             
         # Get the actual charger ID from the database
@@ -83,7 +92,11 @@ async def websocket_endpoint(websocket: WebSocket, charge_point_id: str):
     except Exception as e:
         logger.error(f"❌ DATABASE ERROR | {charge_point_id} | {str(e)}")
         logger.exception(e)  # Log the full exception with traceback
-        await websocket.close(code=4003, reason="Internal server error")
+        # First accept the connection, then close it properly
+        await websocket.accept(subprotocol="ocpp1.6")
+        logger.info(f"✅ CONNECTION TEMPORARILY ACCEPTED FOR REJECTION | {charge_point_id}")
+        await websocket.close(code=1011, reason="Internal server error")
+        logger.info(f"🔌 CONNECTION PROPERLY CLOSED | {charge_point_id}")
         return
 
     try:
