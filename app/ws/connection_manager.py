@@ -31,6 +31,22 @@ class ConnectionManager:
             del self.active_connections[charge_point_id]
             if charge_point_id in self.connection_times:
                 del self.connection_times[charge_point_id]
+            
+            # Update database to mark charger as offline
+            try:
+                now = datetime.now().isoformat()
+                from app.db.database import execute_update
+                execute_update(
+                    """
+                    UPDATE Chargers
+                    SET ChargerIsOnline = ?, ChargerLastDisconn = ?
+                    WHERE ChargerName = ?
+                    """,
+                    (0, now, charge_point_id)
+                )
+                logger.info(f"✅ DATABASE UPDATED: Charger {charge_point_id} marked as offline")
+            except Exception as e:
+                logger.error(f"❌ DATABASE ERROR: Failed to update offline status for {charge_point_id}: {str(e)}")
                 
             logger.info(f"🔌 CHARGE POINT DISCONNECTED | ID: {charge_point_id} | Duration: {session_duration:.2f} seconds")
             logger.info(f"📊 REMAINING CONNECTIONS: {len(self.active_connections)} | IDs: {list(self.active_connections.keys())}")
