@@ -5,6 +5,10 @@ from contextlib import asynccontextmanager
 from app.db.database import init_db
 import logging
 
+from fastapi.middleware.cors import CORSMiddleware
+
+
+
 # Configure logger
 logger = logging.getLogger("ocpp-server")
 
@@ -35,6 +39,14 @@ app = FastAPI(
     description="OCPP server with company, site, and charger management",
     version="1.0.0",
     lifespan=lifespan
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # For production, specify allowed origins instead of "*"
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Include routers
