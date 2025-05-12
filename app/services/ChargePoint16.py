@@ -447,7 +447,7 @@ class ChargePoint16(cp):
             id_tag = kwargs.get('id_tag')
             now = datetime.now().isoformat()
             
-            # Default authorization status is rejected (changed from accepted)
+            # Default authorization status is invalid (changed from accepted)
             authorization_status = AuthorizationStatus.invalid
             
             # Get charger info from database
@@ -484,13 +484,13 @@ class ChargePoint16(cp):
             
             # Log authorization event
             # Do we need to log this in EventsData table?
-            log_event(
-                charger_info,
-                event_type="Authorize",
-                data={"id_tag": id_tag, "status": authorization_status},
-                connector_id=None,
-                session_id=None
-            )
+            # log_event(
+            #     charger_info,
+            #     event_type="Authorize",
+            #     data={"id_tag": id_tag, "status": authorization_status},
+            #     connector_id=None,
+            #     session_id=None
+            # )
             logger.info(f"✅ EVENT LOGGED: Authorization for {self.id}, RFID {id_tag}, status {authorization_status}")
             
         except Exception as e:
