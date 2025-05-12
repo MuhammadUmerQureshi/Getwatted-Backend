@@ -17,19 +17,30 @@ async def get_charge_points():
 async def reset_charge_point(charge_point_id: str, type: str = "Soft"):
     logger.info(f"🔧 Reset command triggered for {charge_point_id} with type '{type}'")
     
+    # Validate reset type
+    if type not in ["Soft", "Hard"]:
+        logger.warning(f"⚠️ Invalid reset type: {type}. Must be 'Soft' or 'Hard'")
+        raise HTTPException(status_code=400, detail=f"Invalid reset type: {type}. Must be 'Soft' or 'Hard'")
+    
     charge_point = manager.get_charge_points().get(charge_point_id)
     if not charge_point:
         logger.warning(f"⚠️  Charge point '{charge_point_id}' not connected.")
         raise HTTPException(status_code=404, detail=f"Charge point '{charge_point_id}' not connected.")
 
     try:
-        message_id = str(uuid.uuid4())
-        ocpp_message = [2, message_id, "Reset", {"type": type}]
+        # Send reset command to charge point and get the response
+        response = await charge_point.reset_req(type=type)
         
-        logger.info(f"📤 OCPP Message to be sent: {ocpp_message}")
-        await charge_point.reset_req(type=type)
-
-        return ocpp_message
+        # Log the response
+        logger.info(f"📥 Reset response received: {response.status}")
+        
+        # Return a meaningful response including the status from the charge point
+        return {
+            "command": "Reset",
+            "charge_point_id": charge_point_id,
+            "type": type,
+            "result": response.status
+        }
     except Exception as e:
         logger.error(f"❌ Reset command failed for {charge_point_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Reset command failed: {str(e)}")
