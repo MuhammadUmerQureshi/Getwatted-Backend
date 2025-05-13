@@ -10,6 +10,7 @@ from app.api.charger_routes import router as charger_router, site_router as char
 from app.api.websocket_routes import router as websocket_router
 from app.api.session_routes import router as session_router
 from app.api.rfid_card_routes import router as rfid_card_router, company_router as rfid_company_router, driver_router as rfid_driver_router
+from app.api.driver_routes import router as driver_router, company_router as driver_company_router
 router = APIRouter()
 logger = logging.getLogger("ocpp.routes")
 
@@ -24,3 +25,5 @@ router.include_router(session_router)
 router.include_router(rfid_card_router)
 router.include_router(rfid_company_router)
 router.include_router(rfid_driver_router)
+router.include_router(driver_router)
+router.include_router(driver_company_router)
