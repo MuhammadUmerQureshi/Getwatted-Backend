@@ -90,33 +90,76 @@ def calculate_session_energy(session_id):
         logger.error(f"❌ DATABASE ERROR: Failed to calculate session energy: {str(e)}")
         return 0
 
+# def get_session_meter_timeline(session_id):
+#     """
+#     Get a timeline of meter values for a specific session.
+    
+#     Args:
+#         session_id (int): The ID of the charge session
+        
+#     Returns:
+#         list: Timeline of meter values
+#     """
+#     try:
+#         meter_events = execute_query(
+#             """
+#             SELECT EventsDataDateTime, EventsDataMeterValue, EventsDataCurrent, EventsDataVoltage
+#             FROM EventsData
+#             WHERE EventsDataSessionId = ? AND EventsDataMeterValue IS NOT NULL
+#             ORDER BY EventsDataDateTime
+#             """,
+#             (session_id,)
+#         )
+        
+#         return meter_events
+        
+#     except Exception as e:
+#         logger.error(f"❌ DATABASE ERROR: Failed to get session meter timeline: {str(e)}")
+#         return []
+
+
+# In app/services/session_service.py
+
 def get_session_meter_timeline(session_id):
     """
-    Get a timeline of meter values for a specific session.
+    Get a timeline of energy values for a specific session.
     
     Args:
         session_id (int): The ID of the charge session
         
     Returns:
-        list: Timeline of meter values
+        list: Timeline of energy readings
     """
     try:
-        meter_events = execute_query(
+        # Query for energy readings only - specifically Energy.Active.Import.Register
+        energy_events = execute_query(
             """
-            SELECT EventsDataDateTime, EventsDataMeterValue, EventsDataCurrent, EventsDataVoltage
+            SELECT 
+                EventsDataDateTime as timestamp,
+                EventsDataMeterValue as energy_wh
             FROM EventsData
-            WHERE EventsDataSessionId = ? AND EventsDataMeterValue IS NOT NULL
+            WHERE EventsDataSessionId = ? 
+              AND EventsDataType = 'MeterValues'
+              AND EventsDataData LIKE '%Energy.Active.Import.Register%'
             ORDER BY EventsDataDateTime
             """,
             (session_id,)
         )
         
-        return meter_events
+        result = []
+        for event in energy_events:
+            if event['energy_wh'] is not None:  # Make sure we only include actual readings
+                result.append({
+                    'timestamp': event['timestamp'],
+                    'energy_wh': event['energy_wh'],
+                    'energy_kwh': event['energy_wh'] / 1000.0
+                })
+        
+        return result
         
     except Exception as e:
-        logger.error(f"❌ DATABASE ERROR: Failed to get session meter timeline: {str(e)}")
+        logger.error(f"❌ DATABASE ERROR: Failed to get session energy timeline: {str(e)}")
         return []
-
 def track_max_power(session_id):
     """
     Calculate the maximum power during a charge session.

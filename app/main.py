@@ -7,8 +7,6 @@ import logging
 
 from fastapi.middleware.cors import CORSMiddleware
 
-
-
 # Configure logger
 logger = logging.getLogger("ocpp-server")
 
@@ -21,17 +19,17 @@ async def lifespan(app: FastAPI):
     """
     try:
         # Initialize database
-        logger.info("🔄 Initializing database...")
+        logger.info("Initializing database...")
         init_db()
-        logger.info("✅ Database initialization complete")
+        logger.info("Database initialization complete")
         
         # Application startup
-        logger.info("🚀 OCPP Server starting up")
+        logger.info("OCPP Server starting up")
         yield
         # Application shutdown
-        logger.info("👋 OCPP Server shutting down")
+        logger.info("OCPP Server shutting down")
     except Exception as e:
-        logger.error(f"❌ Error during application startup: {str(e)}", exc_info=True)
+        logger.error(f"Error during application startup: {str(e)}", exc_info=True)
         raise
 
 app = FastAPI(
@@ -43,7 +41,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For production, specify allowed origins instead of "*"
+    allow_origins=["*"],  # Will update it to the IP address of the client in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
