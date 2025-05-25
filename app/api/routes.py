@@ -1,3 +1,4 @@
+# app/api/routes.py
 from fastapi import APIRouter, HTTPException
 from app.ws.connection_manager import manager
 import logging
@@ -14,11 +15,18 @@ from app.api.driver_routes import router as driver_router, company_router as dri
 from app.api.site_group_routes import router as site_group_router, company_router as site_group_company_router
 from app.api.driver_group_routes import router as driver_group_router, company_router as driver_group_company_router
 from app.api.tariff_routes import router as tariff_router, company_router as tariff_company_router
+from app.api.event_routes import (
+    router as event_router, 
+    company_router as event_company_router,
+    site_router as event_site_router,
+    charger_router as event_charger_router,
+    session_router as event_session_router
+)
 
 router = APIRouter()
 logger = logging.getLogger("ocpp.routes")
 
-# Include our new routers
+# Include our existing routers
 router.include_router(company_router)
 router.include_router(site_router)
 router.include_router(charger_router)
@@ -37,3 +45,10 @@ router.include_router(driver_group_router)
 router.include_router(driver_group_company_router)
 router.include_router(tariff_router)
 router.include_router(tariff_company_router)
+
+# Include new event routers
+router.include_router(event_router)
+router.include_router(event_company_router)
+router.include_router(event_site_router)
+router.include_router(event_charger_router)
+router.include_router(event_session_router)
