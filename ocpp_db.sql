@@ -1,5 +1,5 @@
 -- Companies Table
-CREATE TABLE Companies (
+CREATE TABLE IF NOT EXISTS Companies (
     CompanyId INT PRIMARY KEY,
     CompanyName VARCHAR(255) NOT NULL,
     CompanyEnabled BOOLEAN,
@@ -12,7 +12,7 @@ CREATE TABLE Companies (
 );
 
 -- SitesGroup Table
-CREATE TABLE SitesGroup (
+CREATE TABLE IF NOT EXISTS SitesGroup (
     SiteGroupId INT PRIMARY KEY,
     SiteCompanyId INT,
     SiteGroupName VARCHAR(255) NOT NULL,
@@ -23,7 +23,7 @@ CREATE TABLE SitesGroup (
 );
 
 -- Sites Table
-CREATE TABLE Sites (
+CREATE TABLE IF NOT EXISTS Sites (
     SiteId INT PRIMARY KEY,
     SiteCompanyID INT,
     SiteEnabled BOOLEAN,
@@ -46,7 +46,7 @@ CREATE TABLE Sites (
 );
 
 -- Tariffs Table
-CREATE TABLE Tariffs (
+CREATE TABLE IF NOT EXISTS Tariffs (
     TariffsId INT PRIMARY KEY,
     TariffsCompanyId INT,
     TariffsEnabled BOOLEAN,
@@ -68,7 +68,7 @@ CREATE TABLE Tariffs (
 );
 
 -- Discounts Table
-CREATE TABLE Discounts (
+CREATE TABLE IF NOT EXISTS Discounts (
     DiscountId INT PRIMARY KEY,
     DiscountCompanyId INT,
     DiscountName VARCHAR(255) NOT NULL,
@@ -83,7 +83,7 @@ CREATE TABLE Discounts (
 );
 
 -- DriversGroup Table
-CREATE TABLE DriversGroup (
+CREATE TABLE IF NOT EXISTS DriversGroup (
     DriversGroupId INT PRIMARY KEY,
     DriversGroupCompanyId INT,
     DriversGroupName VARCHAR(255) NOT NULL,
@@ -98,7 +98,7 @@ CREATE TABLE DriversGroup (
 );
 
 -- Drivers Table
-CREATE TABLE Drivers (
+CREATE TABLE IF NOT EXISTS Drivers (
     DriverId INT PRIMARY KEY,
     DriverCompanyId INT,
     DriverEnabled BOOLEAN,
@@ -106,17 +106,19 @@ CREATE TABLE Drivers (
     DriverEmail VARCHAR(255),
     DriverPhone VARCHAR(50),
     DriverGroupId INT,
+    DriverTariffId INT,
     DriverNotifActions BOOLEAN,
     DriverNotifPayments BOOLEAN,
     DriverNotifSystem BOOLEAN,
     DriverCreated DATETIME,
     DriverUpdated DATETIME,
     FOREIGN KEY (DriverCompanyId) REFERENCES Companies(CompanyId),
-    FOREIGN KEY (DriverGroupId) REFERENCES DriversGroup(DriversGroupId)
+    FOREIGN KEY (DriverGroupId) REFERENCES DriversGroup(DriversGroupId),
+    FOREIGN KEY (DriverTariffId) REFERENCES Tariffs(TariffsId)
 );
 
 -- ChargerUsePermit Table
-CREATE TABLE ChargerUsePermit (
+CREATE TABLE IF NOT EXISTS ChargerUsePermit (
     ChargerUsePermitCompanyId INT,
     ChargerUsePermitSiteId INT,
     ChargerUsePermitDriverId INT,
@@ -130,7 +132,7 @@ CREATE TABLE ChargerUsePermit (
 );
 
 -- PaymentMethods Table
-CREATE TABLE PaymentMethods (
+CREATE TABLE IF NOT EXISTS PaymentMethods (
     PaymentMethodId INT PRIMARY KEY,
     PaymentMethodCompanyId INT,
     PaymentMethodName VARCHAR(255) NOT NULL,
@@ -141,7 +143,7 @@ CREATE TABLE PaymentMethods (
 );
 
 -- RFIDCards Table
-CREATE TABLE RFIDCards (
+CREATE TABLE IF NOT EXISTS RFIDCards (
     RFIDCardId VARCHAR(100) PRIMARY KEY,
     RFIDCardCompanyId INT,
     RFIDCardDriverId INT,
@@ -156,7 +158,7 @@ CREATE TABLE RFIDCards (
 );
 
 -- UserRoles Table
-CREATE TABLE UserRoles (
+CREATE TABLE IF NOT EXISTS UserRoles (
     UserRoleId INT PRIMARY KEY,
     UserRoleName VARCHAR(255) NOT NULL,
     UserRoleLevel INT,
@@ -165,7 +167,7 @@ CREATE TABLE UserRoles (
 );
 
 -- Users Table
-CREATE TABLE Users (
+CREATE TABLE IF NOT EXISTS Users (
     UserId INT PRIMARY KEY,
     UserRoleId INT,
     UserFirstName VARCHAR(100),
@@ -180,7 +182,7 @@ CREATE TABLE Users (
 );
 
 -- Settings Table
-CREATE TABLE Settings (
+CREATE TABLE IF NOT EXISTS Settings (
     Currency VARCHAR(10),
     TimeZone VARCHAR(50),
     DayTimeFrom TIME,
@@ -190,7 +192,7 @@ CREATE TABLE Settings (
 );
 
 -- Commands Table
-CREATE TABLE CommandsToCharger (
+CREATE TABLE IF NOT EXISTS CommandsToCharger (
     CommandId INT PRIMARY KEY,
     CommandLabel VARCHAR(255) NOT NULL,
     CommandDescription TEXT,
@@ -203,7 +205,7 @@ CREATE TABLE CommandsToCharger (
 );
 
 -- Chargers Table
-CREATE TABLE Chargers (
+CREATE TABLE IF NOT EXISTS Chargers (
     ChargerId INT,
     ChargerCompanyId INT,
     ChargerSiteId INT,
@@ -252,7 +254,7 @@ CREATE TABLE Chargers (
 );
 
 -- Connectors Table
-CREATE TABLE Connectors (
+CREATE TABLE IF NOT EXISTS Connectors (
     ConnectorId INT,
     ConnectorCompanyId INT,
     ConnectorSiteId INT,
@@ -271,7 +273,7 @@ CREATE TABLE Connectors (
 );
 
 -- ChargeSessions Table
-CREATE TABLE ChargeSessions (
+CREATE TABLE IF NOT EXISTS ChargeSessions (
     ChargeSessionId INT PRIMARY KEY,
     ChargerSessionCompanyId INT,
     ChargerSessionSiteId INT,
@@ -303,7 +305,7 @@ CREATE TABLE ChargeSessions (
 );
 
 -- PaymentTransactions Table
-CREATE TABLE PaymentTransactions (
+CREATE TABLE IF NOT EXISTS PaymentTransactions (
     PaymentTransactionId INT PRIMARY KEY,
     PaymentTransactionMethodUsed INT,
     PaymentTransactionDriverId INT,
@@ -321,7 +323,7 @@ CREATE TABLE PaymentTransactions (
 );
 
 -- EventsData Table
-CREATE TABLE EventsData (
+CREATE TABLE IF NOT EXISTS EventsData (
     EventsDataNumber INT PRIMARY KEY,
     EventsDataCompanyId INT,
     EventsDataSiteId INT,
