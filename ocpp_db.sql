@@ -89,10 +89,12 @@ CREATE TABLE DriversGroup (
     DriversGroupName VARCHAR(255) NOT NULL,
     DriversGroupEnabled BOOLEAN,
     DriversGroupDiscountId INT,
+    DriverTariffId INT,
     DriversGroupCreated DATETIME,
     DriversGroupUpdated DATETIME,
     FOREIGN KEY (DriversGroupCompanyId) REFERENCES Companies(CompanyId),
-    FOREIGN KEY (DriversGroupDiscountId) REFERENCES Discounts(DiscountId)
+    FOREIGN KEY (DriversGroupDiscountId) REFERENCES Discounts(DiscountId),
+    FOREIGN KEY (DriverTariffId) REFERENCES Tariffs(TariffsId)
 );
 
 -- Drivers Table
@@ -107,12 +109,10 @@ CREATE TABLE Drivers (
     DriverNotifActions BOOLEAN,
     DriverNotifPayments BOOLEAN,
     DriverNotifSystem BOOLEAN,
-    DriverTariffId INT,
     DriverCreated DATETIME,
     DriverUpdated DATETIME,
     FOREIGN KEY (DriverCompanyId) REFERENCES Companies(CompanyId),
-    FOREIGN KEY (DriverGroupId) REFERENCES DriversGroup(DriversGroupId),
-    FOREIGN KEY (DriverTariffId) REFERENCES Tariffs(TariffsId)
+    FOREIGN KEY (DriverGroupId) REFERENCES DriversGroup(DriversGroupId)
 );
 
 -- ChargerUsePermit Table
@@ -121,6 +121,7 @@ CREATE TABLE ChargerUsePermit (
     ChargerUsePermitSiteId INT,
     ChargerUsePermitDriverId INT,
     ChargerUsePermitEnabled BOOLEAN,
+    ChargerUsePermitCreated DATETIME,
     ChargerUsePermitUpdated DATETIME,
     PRIMARY KEY (ChargerUsePermitCompanyId, ChargerUsePermitSiteId, ChargerUsePermitDriverId),
     FOREIGN KEY (ChargerUsePermitCompanyId) REFERENCES Companies(CompanyId),
@@ -194,9 +195,11 @@ CREATE TABLE CommandsToCharger (
     CommandLabel VARCHAR(255) NOT NULL,
     CommandDescription TEXT,
     CommandEnabled BOOLEAN,
-    CommandString TEXT,
-    CommandCreated DATETIME,
-    CommandUpdated DATETIME
+    CommandParam1 VARCHAR(255),
+    CommandParam2 VARCHAR(255),
+    CommandParam3 VARCHAR(255),
+    CommandParam4 VARCHAR(255),
+    CommandParam5 VARCHAR(255)
 );
 
 -- Chargers Table
