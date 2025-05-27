@@ -8,7 +8,7 @@ from app.models.session import ChargeSession
 from app.db.database import execute_query
 from app.services.session_service import get_session_meter_timeline, calculate_session_energy, track_max_power
 
-router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
+router = APIRouter(prefix="/api/v1/sessions", tags=["SESSIONS"])
 
 logger = logging.getLogger("ocpp.sessions")
 

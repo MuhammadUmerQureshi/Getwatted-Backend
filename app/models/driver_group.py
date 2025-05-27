@@ -9,6 +9,7 @@ class DriverGroupCreate(BaseModel):
     DriversGroupCompanyId: int
     DriversGroupEnabled: bool = True
     DriversGroupDiscountId: Optional[int] = None
+    DriverTariffId: Optional[int] = None
 
 
 class DriverGroupUpdate(BaseModel):
@@ -16,6 +17,7 @@ class DriverGroupUpdate(BaseModel):
     DriversGroupName: Optional[str] = None
     DriversGroupEnabled: Optional[bool] = None
     DriversGroupDiscountId: Optional[int] = None
+    DriverTariffId: Optional[int] = None
 
 
 class DriverGroup(BaseModel):
@@ -25,6 +27,7 @@ class DriverGroup(BaseModel):
     DriversGroupName: str
     DriversGroupEnabled: bool
     DriversGroupDiscountId: Optional[int] = None
+    DriverTariffId: Optional[int] = None
     DriversGroupCreated: datetime
     DriversGroupUpdated: datetime
 

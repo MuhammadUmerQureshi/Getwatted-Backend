@@ -7,8 +7,8 @@ import logging
 from app.models.driver import Driver, DriverCreate, DriverUpdate
 from app.db.database import execute_query, execute_insert, execute_update, execute_delete
 
-router = APIRouter(prefix="/api/v1/drivers", tags=["drivers"])
-company_router = APIRouter(prefix="/api/v1/companies", tags=["companies"])
+router = APIRouter(prefix="/api/v1/drivers", tags=["DRIVERS"])
+company_router = APIRouter(prefix="/api/v1/companies", tags=["COMPANIES"])
 
 logger = logging.getLogger("ocpp.drivers")
 
@@ -90,16 +90,6 @@ async def create_driver(driver: DriverCreate):
             
             if not driver_group:
                 raise HTTPException(status_code=404, detail=f"Driver group with ID {driver.DriverGroupId} not found")
-                
-        # Check if tariff exists if provided
-        if driver.DriverTariffId:
-            tariff = execute_query(
-                "SELECT 1 FROM Tariffs WHERE TariffsId = ?", 
-                (driver.DriverTariffId,)
-            )
-            
-            if not tariff:
-                raise HTTPException(status_code=404, detail=f"Tariff with ID {driver.DriverTariffId} not found")
         
         # Get maximum driver ID and increment by 1
         max_id_result = execute_query("SELECT MAX(DriverId) as max_id FROM Drivers")
@@ -115,9 +105,9 @@ async def create_driver(driver: DriverCreate):
             INSERT INTO Drivers (
                 DriverId, DriverCompanyId, DriverEnabled, DriverFullName,
                 DriverEmail, DriverPhone, DriverGroupId, DriverNotifActions,
-                DriverNotifPayments, DriverNotifSystem, DriverTariffId,
+                DriverNotifPayments, DriverNotifSystem,
                 DriverCreated, DriverUpdated
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 new_id,
@@ -130,7 +120,6 @@ async def create_driver(driver: DriverCreate):
                 1 if driver.DriverNotifActions else 0,
                 1 if driver.DriverNotifPayments else 0,
                 1 if driver.DriverNotifSystem else 0,
-                driver.DriverTariffId,
                 now,
                 now
             )
@@ -162,16 +151,6 @@ async def update_driver(driver_id: int, driver: DriverUpdate):
             
             if not driver_group:
                 raise HTTPException(status_code=404, detail=f"Driver group with ID {driver.DriverGroupId} not found")
-                
-        # Check if tariff exists if provided
-        if driver.DriverTariffId:
-            tariff = execute_query(
-                "SELECT 1 FROM Tariffs WHERE TariffsId = ?", 
-                (driver.DriverTariffId,)
-            )
-            
-            if not tariff:
-                raise HTTPException(status_code=404, detail=f"Tariff with ID {driver.DriverTariffId} not found")
         
         # Build update query dynamically based on provided fields
         update_fields = []

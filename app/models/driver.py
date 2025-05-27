@@ -14,7 +14,6 @@ class DriverCreate(BaseModel):
     DriverNotifActions: bool = False
     DriverNotifPayments: bool = False
     DriverNotifSystem: bool = False
-    DriverTariffId: Optional[int] = None
 
 class DriverUpdate(BaseModel):
     """Schema for updating a driver."""
@@ -26,7 +25,6 @@ class DriverUpdate(BaseModel):
     DriverNotifActions: Optional[bool] = None
     DriverNotifPayments: Optional[bool] = None
     DriverNotifSystem: Optional[bool] = None
-    DriverTariffId: Optional[int] = None
 
 class Driver(BaseModel):
     """Driver model representing a driver in the database."""
@@ -40,7 +38,6 @@ class Driver(BaseModel):
     DriverNotifActions: bool
     DriverNotifPayments: bool
     DriverNotifSystem: bool
-    DriverTariffId: Optional[int] = None
     DriverCreated: datetime
     DriverUpdated: datetime
 

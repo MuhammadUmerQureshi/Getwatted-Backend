@@ -6,8 +6,8 @@ import logging
 from app.models.site import Site, SiteCreate, SiteUpdate
 from app.db.database import execute_query, execute_insert, execute_update, execute_delete
 
-router = APIRouter(prefix="/api/v1/sites", tags=["sites"])
-company_router = APIRouter(prefix="/api/v1/companies", tags=["companies"])
+router = APIRouter(prefix="/api/v1/sites", tags=["SITES"])
+company_router = APIRouter(prefix="/api/v1/companies", tags=["COMPANIES"])
 
 logger = logging.getLogger("ocpp.sites")
 

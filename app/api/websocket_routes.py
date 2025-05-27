@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 from app.ws.connection_manager import manager
 import logging
 import uuid
-router = APIRouter(prefix="/api/v1/cs", tags=["Websocket"])
+router = APIRouter(prefix="/api/v1/cs", tags=["WEBSOCKETS"])
 logger = logging.getLogger("ocpp.websockets")
 @router.get("/")
 async def root():

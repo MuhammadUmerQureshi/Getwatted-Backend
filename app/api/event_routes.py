@@ -7,11 +7,11 @@ import logging
 from app.models.event import EventData, EventSummary, EventTypeStats
 from app.db.database import execute_query
 
-router = APIRouter(prefix="/api/v1/events", tags=["events"])
-company_router = APIRouter(prefix="/api/v1/companies", tags=["companies"])
-site_router = APIRouter(prefix="/api/v1/sites", tags=["sites"])
-charger_router = APIRouter(prefix="/api/v1/chargers", tags=["chargers"])
-session_router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
+router = APIRouter(prefix="/api/v1/events", tags=["EVENTS"])
+company_router = APIRouter(prefix="/api/v1/companies", tags=["COMPANIES"])
+site_router = APIRouter(prefix="/api/v1/sites", tags=["SITES"])
+charger_router = APIRouter(prefix="/api/v1/chargers", tags=["CHARGERS"])
+session_router = APIRouter(prefix="/api/v1/sessions", tags=["SESSIONS"])
 
 logger = logging.getLogger("ocpp.events")
 

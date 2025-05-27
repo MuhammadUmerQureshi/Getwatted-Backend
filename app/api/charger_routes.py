@@ -7,8 +7,8 @@ from app.models.charger import Charger, ChargerCreate, ChargerUpdate, Connector,
 from app.db.database import execute_query, execute_insert, execute_update, execute_delete
 from app.ws.connection_manager import manager
 
-router = APIRouter(prefix="/api/v1/chargers", tags=["chargers"])
-site_router = APIRouter(prefix="/api/v1/sites", tags=["sites"])
+router = APIRouter(prefix="/api/v1/chargers", tags=["CHARGERS"])
+site_router = APIRouter(prefix="/api/v1/sites", tags=["SITES"])
 
 logger = logging.getLogger("ocpp.chargers")
 

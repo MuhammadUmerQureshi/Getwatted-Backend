@@ -6,8 +6,8 @@ import logging
 from app.models.tariff import Tariff, TariffCreate, TariffUpdate
 from app.db.database import execute_query, execute_insert, execute_update, execute_delete
 
-router = APIRouter(prefix="/api/v1/tariffs", tags=["tariffs"])
-company_router = APIRouter(prefix="/api/v1/companies", tags=["companies"])
+router = APIRouter(prefix="/api/v1/tariffs", tags=["TARIFFS"])
+company_router = APIRouter(prefix="/api/v1/companies", tags=["COMPANIES"])
 
 logger = logging.getLogger("ocpp.tariffs")
 

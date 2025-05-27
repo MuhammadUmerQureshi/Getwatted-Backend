@@ -6,7 +6,7 @@ import logging
 from app.models.company import Company, CompanyCreate, CompanyUpdate
 from app.db.database import execute_query, execute_insert, execute_update, execute_delete
 
-router = APIRouter(prefix="/api/v1/companies", tags=["companies"])
+router = APIRouter(prefix="/api/v1/companies", tags=["COMPANIES"])
 logger = logging.getLogger("ocpp.companies")
 
 @router.get("/", response_model=List[Company])

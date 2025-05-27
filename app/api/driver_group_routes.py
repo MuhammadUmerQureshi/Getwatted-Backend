@@ -6,8 +6,8 @@ import logging
 from app.models.driver_group import DriverGroup, DriverGroupCreate, DriverGroupUpdate
 from app.db.database import execute_query, execute_insert, execute_update, execute_delete
 
-router = APIRouter(prefix="/api/v1/driver_groups", tags=["driver_groups"])
-company_router = APIRouter(prefix="/api/v1/companies", tags=["companies"])
+router = APIRouter(prefix="/api/v1/driver_groups", tags=["DRIVER Groups"])
+company_router = APIRouter(prefix="/api/v1/companies", tags=["COMPANIES"])
 
 logger = logging.getLogger("ocpp.driver_groups")
 
@@ -84,6 +84,16 @@ async def create_driver_group(driver_group: DriverGroupCreate):
             
             if not discount:
                 raise HTTPException(status_code=404, detail=f"Discount with ID {driver_group.DriversGroupDiscountId} not found")
+                
+        # Check if tariff exists if provided
+        if driver_group.DriverTariffId:
+            tariff = execute_query(
+                "SELECT 1 FROM Tariffs WHERE TariffsId = ?", 
+                (driver_group.DriverTariffId,)
+            )
+            
+            if not tariff:
+                raise HTTPException(status_code=404, detail=f"Tariff with ID {driver_group.DriverTariffId} not found")
         
         # Get maximum driver group ID and increment by 1
         max_id_result = execute_query("SELECT MAX(DriversGroupId) as max_id FROM DriversGroup")
@@ -98,8 +108,8 @@ async def create_driver_group(driver_group: DriverGroupCreate):
             """
             INSERT INTO DriversGroup (
                 DriversGroupId, DriversGroupCompanyId, DriversGroupName, DriversGroupEnabled,
-                DriversGroupDiscountId, DriversGroupCreated, DriversGroupUpdated
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                DriversGroupDiscountId, DriverTariffId, DriversGroupCreated, DriversGroupUpdated
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 new_id,
@@ -107,6 +117,7 @@ async def create_driver_group(driver_group: DriverGroupCreate):
                 driver_group.DriversGroupName,
                 1 if driver_group.DriversGroupEnabled else 0,
                 driver_group.DriversGroupDiscountId,
+                driver_group.DriverTariffId,
                 now,
                 now
             )
@@ -138,6 +149,16 @@ async def update_driver_group(driver_group_id: int, driver_group: DriverGroupUpd
             
             if not discount:
                 raise HTTPException(status_code=404, detail=f"Discount with ID {driver_group.DriversGroupDiscountId} not found")
+                
+        # Check if tariff exists if provided
+        if driver_group.DriverTariffId:
+            tariff = execute_query(
+                "SELECT 1 FROM Tariffs WHERE TariffsId = ?", 
+                (driver_group.DriverTariffId,)
+            )
+            
+            if not tariff:
+                raise HTTPException(status_code=404, detail=f"Tariff with ID {driver_group.DriverTariffId} not found")
         
         # Build update query dynamically based on provided fields
         update_fields = []

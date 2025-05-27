@@ -7,9 +7,9 @@ import logging
 from app.models.rfid_card import RFIDCard, RFIDCardCreate, RFIDCardUpdate
 from app.db.database import execute_query, execute_insert, execute_update, execute_delete
 
-router = APIRouter(prefix="/api/v1/rfid_cards", tags=["rfid_cards"])
-company_router = APIRouter(prefix="/api/v1/companies", tags=["companies"])
-driver_router = APIRouter(prefix="/api/v1/drivers", tags=["drivers"])
+router = APIRouter(prefix="/api/v1/rfid_cards", tags=["RFID CARDS"])
+company_router = APIRouter(prefix="/api/v1/companies", tags=["COMPANIES"])
+driver_router = APIRouter(prefix="/api/v1/drivers", tags=["DRIVERS"])
 
 logger = logging.getLogger("ocpp.rfid_cards")
 
