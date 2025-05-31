@@ -458,6 +458,102 @@ class ChargePoint16(cp):
         )
 
 
+    # @on(Action.stop_transaction)
+    # def on_stop_transaction(self, **kwargs):
+    #     logger.info(f"⏹️ RECEIVED: StopTransaction from {self.id}")
+    #     logger.info(f"⏹️ DETAILS: transaction_id={kwargs.get('transaction_id', 'N/A')}, meter_stop={kwargs.get('meter_stop', 'N/A')}, timestamp={kwargs.get('timestamp', 'N/A')}")
+        
+    #     # Handle stop transaction in database
+    #     try:
+    #         now = datetime.now().isoformat()
+    #         transaction_id = kwargs.get('transaction_id')
+    #         meter_stop = kwargs.get('meter_stop', 0)
+    #         timestamp = kwargs.get('timestamp', now)
+    #         reason = kwargs.get('reason')
+            
+    #         # Default response value
+    #         status = AuthorizationStatus.accepted
+            
+    #         # Get charger info directly - we know it exists since we received a message
+    #         charger_info = get_charger_info(self.id)
+            
+    #         # Get session info
+    #         session_info = get_charge_session_info(transaction_id)
+            
+    #         if session_info:
+    #             connector_id = session_info.get('connector_id')
+    #             start_time = session_info.get('start_time')
+                
+    #             # Calculate duration and energy
+    #             try:
+    #                 # Fix for timestamp format issue - handle 'Z' timezone indicator
+    #                 start_time_clean = start_time.replace('Z', '+00:00') if start_time and start_time.endswith('Z') else start_time
+    #                 timestamp_clean = timestamp.replace('Z', '+00:00') if timestamp and timestamp.endswith('Z') else timestamp
+                    
+    #                 # Log the cleaned timestamps for debugging
+    #                 logger.info(f"🕒 Cleaned timestamps - Start: {start_time_clean}, End: {timestamp_clean}")
+                    
+    #                 # Calculate duration
+    #                 start_dt = datetime.fromisoformat(start_time_clean)
+    #                 end_dt = datetime.fromisoformat(timestamp_clean)
+    #                 duration_seconds = int((end_dt - start_dt).total_seconds())
+                    
+    #                 # Get meter start value
+    #                 meter_start = get_meter_start_value(transaction_id)
+                    
+    #                 # Calculate energy used in kWh
+    #                 energy_kwh = (meter_stop - meter_start) / 1000.0  # Convert from Wh to kWh
+                    
+    #                 # Update session record
+    #                 update_success = update_charge_session_on_stop(
+    #                     transaction_id, 
+    #                     timestamp_clean,  # Use the cleaned timestamp 
+    #                     duration_seconds, 
+    #                     reason, 
+    #                     energy_kwh
+    #                 )
+                    
+    #                 if update_success:
+    #                     logger.info(f"✅ CHARGE SESSION UPDATED: ID {transaction_id} for charger {self.id}, duration {duration_seconds}s, energy {energy_kwh} kWh")
+    #                 else:
+    #                     logger.error(f"❌ Failed to update charge session in database")
+                    
+    #                 # Update connector status to Available
+    #                 if connector_id is not None:
+    #                     update_connector_status(charger_info, connector_id, 'Available')
+                        
+    #             except Exception as e:
+    #                 logger.error(f"❌ Error updating session: {str(e)}")
+    #                 logger.error(f"❌ Debug info - Start time: '{start_time}', End time: '{timestamp}'")
+    #         else:
+    #             logger.warning(f"⚠️ Transaction {transaction_id} not found in database")
+            
+    #         # Log stop transaction event with meter stop value
+    #         log_event(
+    #             charger_info,
+    #             event_type="StopTransaction",
+    #             data=kwargs,
+    #             connector_id=None,  # We don't have connector_id directly from kwargs
+    #             session_id=transaction_id,
+    #             timestamp=timestamp,
+    #             meter_value=meter_stop
+    #         )
+    #         logger.info(f"✅ EVENT LOGGED: Stop transaction for {self.id}, transaction {transaction_id}, meter {meter_stop}")
+            
+    #     except Exception as e:
+    #         logger.error(f"❌ DATABASE ERROR: Failed to process stop transaction for {self.id}: {str(e)}")
+    #         logger.error(f"❌ Exception details: {type(e).__name__}, {e.args}")
+    #         # Default value if database error
+    #         status = AuthorizationStatus.accepted
+        
+    #     logger.info(f"⏹️ RESPONSE: StopTransaction.conf with status={status}")
+    #     return call_result.StopTransaction(
+    #         id_tag_info=IdTagInfo(status=status)
+    #     )
+    
+    # Update the on_stop_transaction method in app/services/ChargePoint16.py
+# Replace the existing method with this enhanced version
+
     @on(Action.stop_transaction)
     def on_stop_transaction(self, **kwargs):
         logger.info(f"⏹️ RECEIVED: StopTransaction from {self.id}")
@@ -504,8 +600,9 @@ class ChargePoint16(cp):
                     # Calculate energy used in kWh
                     energy_kwh = (meter_stop - meter_start) / 1000.0  # Convert from Wh to kWh
                     
-                    # Update session record
-                    update_success = update_charge_session_on_stop(
+                    # Use enhanced update function with payment processing
+                    from app.db.charge_point_db import update_charge_session_on_stop_with_payment
+                    update_success = update_charge_session_on_stop_with_payment(
                         transaction_id, 
                         timestamp_clean,  # Use the cleaned timestamp 
                         duration_seconds, 
@@ -514,9 +611,9 @@ class ChargePoint16(cp):
                     )
                     
                     if update_success:
-                        logger.info(f"✅ CHARGE SESSION UPDATED: ID {transaction_id} for charger {self.id}, duration {duration_seconds}s, energy {energy_kwh} kWh")
+                        logger.info(f"✅ CHARGE SESSION UPDATED WITH PAYMENT: ID {transaction_id} for charger {self.id}")
                     else:
-                        logger.error(f"❌ Failed to update charge session in database")
+                        logger.error(f"❌ Failed to update charge session with payment processing")
                     
                     # Update connector status to Available
                     if connector_id is not None:

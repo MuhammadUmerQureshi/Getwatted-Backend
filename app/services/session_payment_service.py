@@ -52,6 +52,7 @@ class SessionPaymentService:
     ) -> bool:
         """
         Update payment transaction status and sync with charge session.
+        Enhanced version that maintains session synchronization.
         
         Args:
             transaction_id: Payment transaction ID
@@ -63,6 +64,7 @@ class SessionPaymentService:
         """
         try:
             now = datetime.now().isoformat()
+            session_id = None
             
             # Get transaction details including session ID
             if transaction_id:
@@ -108,11 +110,31 @@ class SessionPaymentService:
             
             # Update associated charge session if exists
             if session_id:
-                await SessionPaymentService.update_session_payment_status(
-                    session_id=session_id,
-                    payment_transaction_id=transaction_id,
-                    payment_status=payment_status
+                # Import the sync service
+                from app.services.payment_sync_service import PaymentSyncService
+                
+                # Map payment status to session status
+                session_payment_status = PaymentSyncService._map_payment_status(payment_status)
+                
+                # Update session
+                execute_update(
+                    """
+                    UPDATE ChargeSessions 
+                    SET ChargerSessionPaymentStatus = ?, ChargerSessionPaymentId = ?, ChargerSessionPaymentAmount = ?
+                    WHERE ChargeSessionId = ?
+                    """,
+                    (
+                        session_payment_status,
+                        transaction_id,
+                        execute_query(
+                            "SELECT PaymentTransactionAmount FROM PaymentTransactions WHERE PaymentTransactionId = ?",
+                            (transaction_id,)
+                        )[0]["PaymentTransactionAmount"] if transaction_id else None,
+                        session_id
+                    )
                 )
+                
+                logger.info(f"✅ Session {session_id} payment status updated to {session_payment_status}")
             
             logger.info(f"✅ Payment transaction {transaction_id} status updated to {payment_status}")
             return True

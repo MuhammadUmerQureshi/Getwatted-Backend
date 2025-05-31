@@ -463,6 +463,191 @@ def check_rfid_authorization(id_tag, charger_info):
         logger.error(f"❌ DATABASE ERROR: Failed to check RFID authorization: {str(e)}")
         return AuthorizationStatus.invalid
 
+# Add these functions to app/db/charge_point_db.py
+
+def update_charge_session_on_stop_with_payment(transaction_id, timestamp, duration_seconds, reason, energy_kwh):
+    """
+    Enhanced version that calculates cost and creates payment transaction.
+    
+    Args:
+        transaction_id (int): ID of the charge session
+        timestamp (str): End time of the session
+        duration_seconds (int): Duration in seconds
+        reason (str): Reason for stopping
+        energy_kwh (float): Energy used in kWh
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        # 1. Get session details including pricing info
+        session = execute_query(
+            """
+            SELECT ChargerSessionPricingPlanId, ChargerSessionStart, 
+                   ChargerSessionCompanyId, ChargerSessionSiteId,
+                   ChargerSessionChargerId, ChargerSessionDriverId
+            FROM ChargeSessions WHERE ChargeSessionId = ?
+            """,
+            (transaction_id,)
+        )
+        
+        if not session:
+            logger.error(f"Session {transaction_id} not found for payment calculation")
+            return False
+            
+        session_data = session[0]
+        
+        # 2. Calculate cost using TariffService
+        cost = 0.0
+        breakdown = {}
+        
+        if session_data["ChargerSessionPricingPlanId"] and energy_kwh > 0:
+            from app.services.tariff_service import TariffService
+            cost, breakdown = TariffService.calculate_session_cost(
+                pricing_plan_id=session_data["ChargerSessionPricingPlanId"],
+                energy_kwh=energy_kwh,
+                session_start=session_data["ChargerSessionStart"],
+                session_end=timestamp
+            )
+            logger.info(f"Session {transaction_id} cost calculated: ${cost:.2f}")
+        else:
+            logger.info(f"Session {transaction_id} - no pricing plan or zero energy, cost = $0.00")
+        
+        # 3. Create payment transaction if cost > 0
+        payment_transaction_id = None
+        payment_status = "not_required"
+        
+        if cost > 0:
+            payment_transaction_id = create_payment_transaction_for_session(
+                session_data, transaction_id, cost
+            )
+            payment_status = "pending" if payment_transaction_id else "failed"
+            logger.info(f"Payment transaction {payment_transaction_id} created for session {transaction_id}")
+        
+        # 4. Update session with all fields
+        execute_update(
+            """
+            UPDATE ChargeSessions
+            SET ChargerSessionEnd = ?, ChargerSessionDuration = ?,
+                ChargerSessionReason = ?, ChargerSessionStatus = ?,
+                ChargerSessionEnergyKWH = ?, ChargerSessionCost = ?,
+                ChargerSessionPaymentId = ?, ChargerSessionPaymentAmount = ?,
+                ChargerSessionPaymentStatus = ?
+            WHERE ChargeSessionId = ?
+            """,
+            (timestamp, duration_seconds, reason, "Completed", energy_kwh, 
+             cost, payment_transaction_id, cost, payment_status, transaction_id)
+        )
+        
+        logger.info(f"✅ CHARGE SESSION UPDATED: ID {transaction_id}, duration {duration_seconds}s, energy {energy_kwh} kWh, cost ${cost:.2f}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ DATABASE ERROR: Failed to update charge session with payment: {str(e)}")
+        return False
+
+def create_payment_transaction_for_session(session_data, session_id, amount):
+    """
+    Create payment transaction record for completed session.
+    
+    Args:
+        session_data (dict): Session data from database
+        session_id (int): ID of the charge session
+        amount (float): Payment amount
+        
+    Returns:
+        int: Payment transaction ID if successful, None otherwise
+    """
+    try:
+        # Get default payment method for the company
+        default_payment_method = execute_query(
+            """
+            SELECT PaymentMethodId FROM PaymentMethods 
+            WHERE PaymentMethodCompanyId = ? AND PaymentMethodEnabled = 1
+            ORDER BY PaymentMethodId ASC LIMIT 1
+            """,
+            (session_data["ChargerSessionCompanyId"],)
+        )
+        
+        if not default_payment_method:
+            logger.warning(f"No payment method found for company {session_data['ChargerSessionCompanyId']}")
+            return None
+        
+        payment_method_id = default_payment_method[0]["PaymentMethodId"]
+        
+        # Get maximum transaction ID and increment by 1
+        max_id_result = execute_query("SELECT MAX(PaymentTransactionId) as max_id FROM PaymentTransactions")
+        new_id = 1
+        if max_id_result and max_id_result[0]['max_id'] is not None:
+            new_id = max_id_result[0]['max_id'] + 1
+            
+        now = datetime.now().isoformat()
+        
+        # Insert new payment transaction
+        execute_insert(
+            """
+            INSERT INTO PaymentTransactions (
+                PaymentTransactionId, PaymentTransactionMethodUsed, PaymentTransactionDriverId,
+                PaymentTransactionDateTime, PaymentTransactionAmount, PaymentTransactionStatus,
+                PaymentTransactionPaymentStatus, PaymentTransactionCompanyId, PaymentTransactionSiteId, 
+                PaymentTransactionChargerId, PaymentTransactionSessionId,
+                PaymentTransactionCreated, PaymentTransactionUpdated
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                new_id,
+                payment_method_id,
+                session_data["ChargerSessionDriverId"],
+                now,
+                amount,
+                "completed",  # Transaction status - completed session
+                "pending",    # Payment status - awaiting payment
+                session_data["ChargerSessionCompanyId"],
+                session_data["ChargerSessionSiteId"],
+                session_data["ChargerSessionChargerId"],
+                session_id,
+                now,
+                now
+            )
+        )
+        
+        logger.info(f"✅ PAYMENT TRANSACTION CREATED: ID {new_id} for session {session_id}, amount ${amount:.2f}")
+        return new_id
+        
+    except Exception as e:
+        logger.error(f"❌ DATABASE ERROR: Failed to create payment transaction: {str(e)}")
+        return None
+
+def get_default_payment_method(company_id):
+    """
+    Get the default payment method for a company.
+    
+    Args:
+        company_id (int): Company ID
+        
+    Returns:
+        int: Payment method ID or None if not found
+    """
+    try:
+        payment_method = execute_query(
+            """
+            SELECT PaymentMethodId FROM PaymentMethods 
+            WHERE PaymentMethodCompanyId = ? AND PaymentMethodEnabled = 1
+            ORDER BY PaymentMethodId ASC LIMIT 1
+            """,
+            (company_id,)
+        )
+        
+        if payment_method:
+            return payment_method[0]["PaymentMethodId"]
+        else:
+            logger.warning(f"No enabled payment method found for company {company_id}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"❌ DATABASE ERROR: Failed to get default payment method: {str(e)}")
+        return None
+
 def update_charge_session_on_stop(transaction_id, timestamp, duration_seconds, reason, energy_kwh):
     """
     Update a charge session when it stops.
