@@ -4,7 +4,7 @@ from app.ws.connection_manager import manager
 import logging
 import uuid
 
-# Import our new routers
+# Import our existing routers
 from app.api.company_routes import router as company_router
 from app.api.site_routes import router as site_router, company_router as site_company_router
 from app.api.charger_routes import router as charger_router, site_router as charger_site_router
@@ -23,10 +23,23 @@ from app.api.event_routes import (
     session_router as event_session_router
 )
 
+# Import new payment routers
+from app.api.payment_method_routes import router as payment_method_router, company_router as payment_method_company_router
+from app.api.payment_transaction_routes import (
+    router as payment_transaction_router,
+    company_router as payment_transaction_company_router,
+    site_router as payment_transaction_site_router,
+    charger_router as payment_transaction_charger_router,
+    driver_router as payment_transaction_driver_router,
+    session_router as payment_transaction_session_router
+)
+from app.api.stripe_routes import router as stripe_router
+from app.api.session_payment_routes import router as session_payment_router
+
 router = APIRouter()
 logger = logging.getLogger("ocpp.routes")
 
-# Include our existing routers
+# Include existing routers
 router.include_router(company_router)
 router.include_router(site_router)
 router.include_router(charger_router)
@@ -46,9 +59,21 @@ router.include_router(driver_group_company_router)
 router.include_router(tariff_router)
 router.include_router(tariff_company_router)
 
-# Include new event routers
+# Include event routers
 router.include_router(event_router)
 router.include_router(event_company_router)
 router.include_router(event_site_router)
 router.include_router(event_charger_router)
 router.include_router(event_session_router)
+
+# Include new payment routers
+router.include_router(payment_method_router)
+router.include_router(payment_method_company_router)
+router.include_router(payment_transaction_router)
+router.include_router(payment_transaction_company_router)
+router.include_router(payment_transaction_site_router)
+router.include_router(payment_transaction_charger_router)
+router.include_router(payment_transaction_driver_router)
+router.include_router(payment_transaction_session_router)
+router.include_router(stripe_router)
+router.include_router(session_payment_router)

@@ -309,11 +309,12 @@ CREATE TABLE IF NOT EXISTS PaymentTransactions (
     PaymentTransactionDateTime DATETIME,
     PaymentTransactionAmount DECIMAL(10,2),
     PaymentTransactionStatus VARCHAR(50),
+    PaymentTransactionPaymentStatus VARCHAR(50) DEFAULT 'pending',
     PaymentTransactionCompanyId INT,
     PaymentTransactionSiteId INT,
     PaymentTransactionChargerId INT,
-    PaymentTransactionSessionId INT,  -- NEW: Link to charge session
-    PaymentTransactionStripeIntentId VARCHAR(255),  -- NEW: Stripe payment intent ID
+    PaymentTransactionSessionId INT,
+    PaymentTransactionStripeIntentId VARCHAR(255),
     PaymentTransactionCreated DATETIME,
     PaymentTransactionUpdated DATETIME,
     FOREIGN KEY (PaymentTransactionMethodUsed) REFERENCES PaymentMethods(PaymentMethodId),
