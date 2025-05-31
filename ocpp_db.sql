@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS DriversGroup (
     DriversGroupName VARCHAR(255) NOT NULL,
     DriversGroupEnabled BOOLEAN,
     DriversGroupDiscountId INT,
-    DriverTariffId INT,
+    DriverTariffId INT NOT NULL,
     DriversGroupCreated DATETIME,
     DriversGroupUpdated DATETIME,
     FOREIGN KEY (DriversGroupCompanyId) REFERENCES Companies(CompanyId),
@@ -97,7 +97,6 @@ CREATE TABLE IF NOT EXISTS DriversGroup (
     FOREIGN KEY (DriverTariffId) REFERENCES Tariffs(TariffsId)
 );
 
--- Drivers Table
 CREATE TABLE IF NOT EXISTS Drivers (
     DriverId INT PRIMARY KEY,
     DriverCompanyId INT,
@@ -105,16 +104,14 @@ CREATE TABLE IF NOT EXISTS Drivers (
     DriverFullName VARCHAR(255) NOT NULL,
     DriverEmail VARCHAR(255),
     DriverPhone VARCHAR(50),
-    DriverGroupId INT,
-    DriverTariffId INT,
+    DriverGroupId INT NOT NULL, -- Make this NOT NULL since every driver must belong to a group
     DriverNotifActions BOOLEAN,
     DriverNotifPayments BOOLEAN,
     DriverNotifSystem BOOLEAN,
     DriverCreated DATETIME,
     DriverUpdated DATETIME,
     FOREIGN KEY (DriverCompanyId) REFERENCES Companies(CompanyId),
-    FOREIGN KEY (DriverGroupId) REFERENCES DriversGroup(DriversGroupId),
-    FOREIGN KEY (DriverTariffId) REFERENCES Tariffs(TariffsId)
+    FOREIGN KEY (DriverGroupId) REFERENCES DriversGroup(DriversGroupId)
 );
 
 -- ChargerUsePermit Table
@@ -315,11 +312,16 @@ CREATE TABLE IF NOT EXISTS PaymentTransactions (
     PaymentTransactionCompanyId INT,
     PaymentTransactionSiteId INT,
     PaymentTransactionChargerId INT,
+    PaymentTransactionSessionId INT,  -- NEW: Link to charge session
+    PaymentTransactionStripeIntentId VARCHAR(255),  -- NEW: Stripe payment intent ID
+    PaymentTransactionCreated DATETIME,
+    PaymentTransactionUpdated DATETIME,
     FOREIGN KEY (PaymentTransactionMethodUsed) REFERENCES PaymentMethods(PaymentMethodId),
     FOREIGN KEY (PaymentTransactionDriverId) REFERENCES Drivers(DriverId),
     FOREIGN KEY (PaymentTransactionCompanyId) REFERENCES Companies(CompanyId),
     FOREIGN KEY (PaymentTransactionSiteId) REFERENCES Sites(SiteId),
-    FOREIGN KEY (PaymentTransactionChargerId, PaymentTransactionCompanyId, PaymentTransactionSiteId) REFERENCES Chargers(ChargerId, ChargerCompanyId, ChargerSiteId)
+    FOREIGN KEY (PaymentTransactionChargerId, PaymentTransactionCompanyId, PaymentTransactionSiteId) REFERENCES Chargers(ChargerId, ChargerCompanyId, ChargerSiteId),
+    FOREIGN KEY (PaymentTransactionSessionId) REFERENCES ChargeSessions(ChargeSessionId)
 );
 
 -- EventsData Table

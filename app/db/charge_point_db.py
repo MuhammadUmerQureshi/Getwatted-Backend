@@ -275,70 +275,18 @@ def log_event(charger_info, event_type, data, connector_id=None, session_id=None
         logger.error(f"❌ DATABASE ERROR: Failed to log event: {str(e)}")
         return None
 
-# def check_rfid_authorization(id_tag, charger_info):
-#     """
-#     Check if an RFID card is authorized to use the charger.
-    
-#     Args:
-#         id_tag (str): The RFID card ID
-#         charger_info (dict): Dictionary with charger_id, company_id, site_id
-        
-#     Returns:
-#         str: Authorization status (from ocpp.v16.enums.AuthorizationStatus)
-#     """
-#     from ocpp.v16.enums import AuthorizationStatus
-    
-#     try:
-#         company_id = charger_info['company_id']
-#         site_id = charger_info['site_id']
-        
-#         # Check if RFID card exists and is enabled
-#         rfid_card = execute_query(
-#             "SELECT RFIDCardDriverId, RFIDCardEnabled FROM RFIDCards WHERE RFIDCardId = ?",
-#             (id_tag,)
-#         )
-        
-#         if rfid_card:
-#             if not rfid_card[0]["RFIDCardEnabled"]:
-#                 logger.info(f"🚫 Authorization rejected: RFID card {id_tag} is blocked")
-#                 return AuthorizationStatus.blocked
-                
-#             driver_id = rfid_card[0]["RFIDCardDriverId"]
-            
-#             # Check if driver is allowed to use chargers at this site
-#             permission = execute_query(
-#                 """
-#                 SELECT ChargerUsePermitEnabled FROM ChargerUsePermit
-#                 WHERE ChargerUsePermitDriverId = ? AND ChargerUsePermitSiteId = ? AND
-#                       ChargerUsePermitCompanyId = ?
-#                 """,
-#                 (driver_id, site_id, company_id)
-#             )
-            
-#             if permission and not permission[0]["ChargerUsePermitEnabled"]:
-#                 logger.info(f"🚫 Authorization rejected: Driver {driver_id} not permitted at site {site_id}")
-#                 return AuthorizationStatus.blocked
-#         else:
-#             # RFID card not found in database
-#             # You can set this to rejected if you want to only allow registered cards
-#             # return AuthorizationStatus.invalid
-#             logger.info(f"⚠️ Authorization warning: RFID card {id_tag} not in database")
-            
-#         return AuthorizationStatus.accepted
-        
-#     except Exception as e:
-#         logger.error(f"❌ DATABASE ERROR: Failed to check RFID authorization: {str(e)}")
-#         return AuthorizationStatus.accepted
-
-def create_charge_session(charger_info, id_tag, connector_id, timestamp):
+def create_charge_session_with_pricing(charger_info, id_tag, connector_id, timestamp, driver_id=None, pricing_plan_id=None, discount_id=None):
     """
-    Create a new charge session in the database.
+    Create a new charge session in the database with pricing plan and discount information.
     
     Args:
         charger_info (dict): Dictionary with charger_id, company_id, site_id
         id_tag (str): The RFID card ID
         connector_id (int): ID of the connector
         timestamp (str): Start time of the session
+        driver_id (int, optional): ID of the driver
+        pricing_plan_id (int, optional): ID of the pricing plan/tariff
+        discount_id (int, optional): ID of the discount
         
     Returns:
         int: Transaction ID of the new session
@@ -349,45 +297,53 @@ def create_charge_session(charger_info, id_tag, connector_id, timestamp):
         company_id = charger_info['company_id']
         site_id = charger_info['site_id']
         
-        # Find driver ID from RFID card if provided
-        driver_id = None
-        if id_tag:
-            rfid_card = execute_query(
-                "SELECT RFIDCardDriverId FROM RFIDCards WHERE RFIDCardId = ?",
-                (id_tag,)
-            )
-            if rfid_card:
-                driver_id = rfid_card[0]["RFIDCardDriverId"]
-        
         # Get maximum transaction ID and increment
         max_session = execute_query("SELECT MAX(ChargeSessionId) as max_id FROM ChargeSessions")
         transaction_id = 1
         if max_session and max_session[0]['max_id'] is not None:
             transaction_id = max_session[0]['max_id'] + 1
         
-        # Insert new charge session
+        # Insert new charge session with pricing information
         execute_insert(
             """
             INSERT INTO ChargeSessions (
                 ChargeSessionId, ChargerSessionCompanyId, ChargerSessionSiteId,
                 ChargerSessionChargerId, ChargerSessionConnectorId, ChargerSessionDriverId,
                 ChargerSessionRFIDCard, ChargerSessionStart, ChargerSessionStatus,
-                ChargerSessionCreated
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ChargerSessionPricingPlanId, ChargerSessionDiscountId, ChargerSessionCreated
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 transaction_id, company_id, site_id, charger_id,
                 connector_id, driver_id, id_tag, timestamp,
-                "Started", now
+                "Started", pricing_plan_id, discount_id, now
             )
         )
-        logger.info(f"✅ CHARGE SESSION CREATED: ID {transaction_id} for charger {charger_id}, connector {connector_id}")
+        
+        # Log the pricing information
+        pricing_info = f"Pricing Plan ID: {pricing_plan_id}, Discount ID: {discount_id}"
+        logger.info(f"✅ CHARGE SESSION CREATED: ID {transaction_id} for charger {charger_id}, connector {connector_id} | {pricing_info}")
         
         return transaction_id
         
     except Exception as e:
         logger.error(f"❌ DATABASE ERROR: Failed to create charge session: {str(e)}")
         return 1  # Default transaction ID
+
+def create_charge_session(charger_info, id_tag, connector_id, timestamp):
+    """
+    Create a new charge session in the database (backward compatibility).
+    
+    Args:
+        charger_info (dict): Dictionary with charger_id, company_id, site_id
+        id_tag (str): The RFID card ID
+        connector_id (int): ID of the connector
+        timestamp (str): Start time of the session
+        
+    Returns:
+        int: Transaction ID of the new session
+    """
+    return create_charge_session_with_pricing(charger_info, id_tag, connector_id, timestamp)
 
 def get_charge_session_info(transaction_id):
     """
