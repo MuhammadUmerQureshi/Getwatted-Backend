@@ -98,6 +98,30 @@ async def create_charger(charger: ChargerCreate):
                 status_code=404, 
                 detail=f"Site with ID {charger.ChargerSiteId} not found or does not belong to company {charger.ChargerCompanyId}"
             )
+        
+        # Check if charger name already exists within the site
+        existing_charger = execute_query(
+            "SELECT 1 FROM Chargers WHERE ChargerCompanyId = ? AND ChargerSiteId = ? AND ChargerName = ?",
+            (charger.ChargerCompanyId, charger.ChargerSiteId, charger.ChargerName)
+        )
+        
+        if existing_charger:
+            raise HTTPException(
+                status_code=409, 
+                detail=f"Charger with name '{charger.ChargerName}' already exists in site {charger.ChargerSiteId}"
+            )
+            
+        # Check if charger ID already exists within the site
+        existing_charger_id = execute_query(
+            "SELECT 1 FROM Chargers WHERE ChargerId = ? AND ChargerCompanyId = ? AND ChargerSiteId = ?",
+            (charger.ChargerId, charger.ChargerCompanyId, charger.ChargerSiteId)
+        )
+        
+        if existing_charger_id:
+            raise HTTPException(
+                status_code=409, 
+                detail=f"Charger with ID {charger.ChargerId} already exists for company {charger.ChargerCompanyId} and site {charger.ChargerSiteId}"
+            )
             
         # Check if payment method exists if provided
         if charger.ChargerPaymentMethodId:
@@ -108,18 +132,6 @@ async def create_charger(charger: ChargerCreate):
             
             if not payment_method:
                 raise HTTPException(status_code=404, detail=f"Payment method with ID {charger.ChargerPaymentMethodId} not found")
-        
-        # Check if charger already exists
-        existing_charger = execute_query(
-            "SELECT 1 FROM Chargers WHERE ChargerId = ? AND ChargerCompanyId = ? AND ChargerSiteId = ?",
-            (charger.ChargerId, charger.ChargerCompanyId, charger.ChargerSiteId)
-        )
-        
-        if existing_charger:
-            raise HTTPException(
-                status_code=409, 
-                detail=f"Charger with ID {charger.ChargerId} already exists for company {charger.ChargerCompanyId} and site {charger.ChargerSiteId}"
-            )
             
         now = datetime.now().isoformat()
         
@@ -168,6 +180,13 @@ async def create_charger(charger: ChargerCreate):
     except HTTPException:
         raise
     except Exception as e:
+        # Handle database constraint violations
+        if "UNIQUE constraint failed" in str(e):
+            if "ChargerName" in str(e):
+                raise HTTPException(
+                    status_code=409, 
+                    detail=f"Charger with name '{charger.ChargerName}' already exists in site {charger.ChargerSiteId}"
+                )
         logger.error(f"Error creating charger: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 

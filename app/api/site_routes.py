@@ -74,6 +74,18 @@ async def create_site(site: SiteCreate):
         
         if not company:
             raise HTTPException(status_code=404, detail=f"Company with ID {site.SiteCompanyID} not found")
+        
+        # Check if site name already exists within the company
+        existing_site = execute_query(
+            "SELECT 1 FROM Sites WHERE SiteCompanyID = ? AND SiteName = ?", 
+            (site.SiteCompanyID, site.SiteName)
+        )
+        
+        if existing_site:
+            raise HTTPException(
+                status_code=409, 
+                detail=f"Site with name '{site.SiteName}' already exists in company {site.SiteCompanyID}"
+            )
             
         # Check if site group exists if provided
         if site.SiteGroupId:
@@ -94,7 +106,7 @@ async def create_site(site: SiteCreate):
         now = datetime.now().isoformat()
         
         # Insert new site
-        site_id = execute_insert(
+        execute_insert(
             """
             INSERT INTO Sites (
                 SiteId, SiteCompanyID, SiteEnabled, SiteName, SiteGroupId,
@@ -129,6 +141,13 @@ async def create_site(site: SiteCreate):
     except HTTPException:
         raise
     except Exception as e:
+        # Handle database constraint violations
+        if "UNIQUE constraint failed" in str(e):
+            if "SiteCompanyID" in str(e) and "SiteName" in str(e):
+                raise HTTPException(
+                    status_code=409, 
+                    detail=f"Site with name '{site.SiteName}' already exists in company {site.SiteCompanyID}"
+                )
         logger.error(f"Error creating site: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 

@@ -53,6 +53,18 @@ async def get_company(company_id: int):
 async def create_company(company: CompanyCreate):
     """Create a new company."""
     try:
+        # Check if company with the same name already exists
+        existing_company = execute_query(
+            "SELECT * FROM Companies WHERE CompanyName = ?", 
+            (company.CompanyName,)
+        )
+        
+        if existing_company:
+            raise HTTPException(
+                status_code=409, 
+                detail=f"Company with name '{company.CompanyName}' already exists"
+            )
+        
         # Get maximum company ID and increment by 1
         max_id_result = execute_query("SELECT MAX(CompanyId) as max_id FROM Companies")
         new_id = 1
@@ -62,7 +74,7 @@ async def create_company(company: CompanyCreate):
         now = datetime.now().isoformat()
         
         # Insert new company
-        company_id = execute_insert(
+        execute_insert(
             """
             INSERT INTO Companies (
                 CompanyId, CompanyName, CompanyEnabled, CompanyHomePhoto,
@@ -85,7 +97,15 @@ async def create_company(company: CompanyCreate):
         
         # Return the created company
         return await get_company(new_id)
+    except HTTPException:
+        raise
     except Exception as e:
+        # Handle database constraint violations
+        if "UNIQUE constraint failed" in str(e) and "CompanyName" in str(e):
+            raise HTTPException(
+                status_code=409, 
+                detail=f"Company with name '{company.CompanyName}' already exists"
+            )
         logger.error(f"Error creating company: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
@@ -97,6 +117,19 @@ async def update_company(company_id: int, company: CompanyUpdate):
         existing = execute_query("SELECT 1 FROM Companies WHERE CompanyId = ?", (company_id,))
         if not existing:
             raise HTTPException(status_code=404, detail=f"Company with ID {company_id} not found")
+        
+        # Check if new company name conflicts with existing companies (excluding current one)
+        if company.CompanyName is not None:
+            name_conflict = execute_query(
+                "SELECT 1 FROM Companies WHERE CompanyName = ? AND CompanyId != ?", 
+                (company.CompanyName, company_id)
+            )
+            
+            if name_conflict:
+                raise HTTPException(
+                    status_code=409, 
+                    detail=f"Company with name '{company.CompanyName}' already exists"
+                )
         
         # Build update query dynamically based on provided fields
         update_fields = []
@@ -132,6 +165,12 @@ async def update_company(company_id: int, company: CompanyUpdate):
     except HTTPException:
         raise
     except Exception as e:
+        # Handle database constraint violations
+        if "UNIQUE constraint failed" in str(e) and "CompanyName" in str(e):
+            raise HTTPException(
+                status_code=409, 
+                detail=f"Company with name '{company.CompanyName}' already exists"
+            )
         logger.error(f"Error updating company {company_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
