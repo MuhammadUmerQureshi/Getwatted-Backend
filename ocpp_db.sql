@@ -1,7 +1,10 @@
+-- Complete OCPP Database Schema with Unique Constraints
+-- This file creates all tables with proper relationships and unique constraints
+
 -- Companies Table
 CREATE TABLE IF NOT EXISTS Companies (
     CompanyId INT PRIMARY KEY,
-    CompanyName VARCHAR(255) NOT NULL,
+    CompanyName VARCHAR(255) NOT NULL UNIQUE, -- Globally unique company names
     CompanyEnabled BOOLEAN,
     CompanyHomePhoto VARCHAR(255),
     CompanyBrandColour VARCHAR(50),
@@ -19,7 +22,9 @@ CREATE TABLE IF NOT EXISTS SitesGroup (
     SiteGroupEnabled BOOLEAN,
     SiteGroupCreated DATETIME,
     SiteGroupUpdated DATETIME,
-    FOREIGN KEY (SiteCompanyId) REFERENCES Companies(CompanyId)
+    FOREIGN KEY (SiteCompanyId) REFERENCES Companies(CompanyId),
+    -- Site group names should be unique within each company
+    UNIQUE(SiteCompanyId, SiteGroupName)
 );
 
 -- Sites Table
@@ -42,7 +47,9 @@ CREATE TABLE IF NOT EXISTS Sites (
     SiteCreated DATETIME,
     SiteUpdated DATETIME,
     FOREIGN KEY (SiteCompanyID) REFERENCES Companies(CompanyId),
-    FOREIGN KEY (SiteGroupId) REFERENCES SitesGroup(SiteGroupId)
+    FOREIGN KEY (SiteGroupId) REFERENCES SitesGroup(SiteGroupId),
+    -- Site names must be unique within each company
+    UNIQUE(SiteCompanyID, SiteName)
 );
 
 -- Tariffs Table
@@ -64,7 +71,9 @@ CREATE TABLE IF NOT EXISTS Tariffs (
     TariffsIdleApplyAfter INT,
     TariffsCreated DATETIME,
     TariffsUpdated DATETIME,
-    FOREIGN KEY (TariffsCompanyId) REFERENCES Companies(CompanyId)
+    FOREIGN KEY (TariffsCompanyId) REFERENCES Companies(CompanyId),
+    -- Tariff names should be unique within each company
+    UNIQUE(TariffsCompanyId, TariffsName)
 );
 
 -- Discounts Table
@@ -79,7 +88,9 @@ CREATE TABLE IF NOT EXISTS Discounts (
     DiscountEndDate DATE,
     DiscountCreated DATETIME,
     DiscountUpdated DATETIME,
-    FOREIGN KEY (DiscountCompanyId) REFERENCES Companies(CompanyId)
+    FOREIGN KEY (DiscountCompanyId) REFERENCES Companies(CompanyId),
+    -- Discount names should be unique within each company
+    UNIQUE(DiscountCompanyId, DiscountName)
 );
 
 -- DriversGroup Table
@@ -94,9 +105,12 @@ CREATE TABLE IF NOT EXISTS DriversGroup (
     DriversGroupUpdated DATETIME,
     FOREIGN KEY (DriversGroupCompanyId) REFERENCES Companies(CompanyId),
     FOREIGN KEY (DriversGroupDiscountId) REFERENCES Discounts(DiscountId),
-    FOREIGN KEY (DriverTariffId) REFERENCES Tariffs(TariffsId)
+    FOREIGN KEY (DriverTariffId) REFERENCES Tariffs(TariffsId),
+    -- Driver group names should be unique within each company
+    UNIQUE(DriversGroupCompanyId, DriversGroupName)
 );
 
+-- Drivers Table
 CREATE TABLE IF NOT EXISTS Drivers (
     DriverId INT PRIMARY KEY,
     DriverCompanyId INT,
@@ -111,7 +125,9 @@ CREATE TABLE IF NOT EXISTS Drivers (
     DriverCreated DATETIME,
     DriverUpdated DATETIME,
     FOREIGN KEY (DriverCompanyId) REFERENCES Companies(CompanyId),
-    FOREIGN KEY (DriverGroupId) REFERENCES DriversGroup(DriversGroupId)
+    FOREIGN KEY (DriverGroupId) REFERENCES DriversGroup(DriversGroupId),
+    -- Driver emails should be unique within each company (if provided)
+    UNIQUE(DriverCompanyId, DriverEmail)
 );
 
 -- ChargerUsePermit Table
@@ -136,12 +152,14 @@ CREATE TABLE IF NOT EXISTS PaymentMethods (
     PaymentMethodEnabled BOOLEAN,
     PaymentMethodCreated DATETIME,
     PaymentMethodUpdated DATETIME,
-    FOREIGN KEY (PaymentMethodCompanyId) REFERENCES Companies(CompanyId)
+    FOREIGN KEY (PaymentMethodCompanyId) REFERENCES Companies(CompanyId),
+    -- Payment method names should be unique within each company
+    UNIQUE(PaymentMethodCompanyId, PaymentMethodName)
 );
 
 -- RFIDCards Table
 CREATE TABLE IF NOT EXISTS RFIDCards (
-    RFIDCardId VARCHAR(100) PRIMARY KEY,
+    RFIDCardId VARCHAR(100) PRIMARY KEY, -- RFID card IDs are globally unique
     RFIDCardCompanyId INT,
     RFIDCardDriverId INT,
     RFIDCardEnabled BOOLEAN,
@@ -157,7 +175,7 @@ CREATE TABLE IF NOT EXISTS RFIDCards (
 -- UserRoles Table
 CREATE TABLE IF NOT EXISTS UserRoles (
     UserRoleId INT PRIMARY KEY,
-    UserRoleName VARCHAR(255) NOT NULL,
+    UserRoleName VARCHAR(255) NOT NULL UNIQUE, -- Role names should be globally unique
     UserRoleLevel INT,
     UserRoleCreated DATETIME,
     UserRoleUpdated DATETIME
@@ -169,7 +187,7 @@ CREATE TABLE IF NOT EXISTS Users (
     UserRoleId INT,
     UserFirstName VARCHAR(100),
     UserLastName VARCHAR(100),
-    UserEmail VARCHAR(255),
+    UserEmail VARCHAR(255) UNIQUE, -- User emails should be globally unique
     UserPhone VARCHAR(50),
     UserPaymentMethodId INT,
     UserCreated DATETIME,
@@ -191,7 +209,7 @@ CREATE TABLE IF NOT EXISTS Settings (
 -- Commands Table
 CREATE TABLE IF NOT EXISTS CommandsToCharger (
     CommandId INT PRIMARY KEY,
-    CommandLabel VARCHAR(255) NOT NULL,
+    CommandLabel VARCHAR(255) NOT NULL UNIQUE, -- Command labels should be unique
     CommandDescription TEXT,
     CommandEnabled BOOLEAN,
     CommandParam1 VARCHAR(255),
@@ -247,7 +265,11 @@ CREATE TABLE IF NOT EXISTS Chargers (
     PRIMARY KEY (ChargerId, ChargerCompanyId, ChargerSiteId),
     FOREIGN KEY (ChargerCompanyId) REFERENCES Companies(CompanyId),
     FOREIGN KEY (ChargerSiteId) REFERENCES Sites(SiteId),
-    FOREIGN KEY (ChargerPaymentMethodId) REFERENCES PaymentMethods(PaymentMethodId)
+    FOREIGN KEY (ChargerPaymentMethodId) REFERENCES PaymentMethods(PaymentMethodId),
+    -- Charger names must be unique within each site
+    UNIQUE(ChargerCompanyId, ChargerSiteId, ChargerName),
+    -- Charger serial numbers should be globally unique (if provided)
+    UNIQUE(ChargerSerial)
 );
 
 -- Connectors Table
@@ -314,7 +336,7 @@ CREATE TABLE IF NOT EXISTS PaymentTransactions (
     PaymentTransactionSiteId INT,
     PaymentTransactionChargerId INT,
     PaymentTransactionSessionId INT,
-    PaymentTransactionStripeIntentId VARCHAR(255),
+    PaymentTransactionStripeIntentId VARCHAR(255) UNIQUE, -- Stripe intent IDs are globally unique
     PaymentTransactionCreated DATETIME,
     PaymentTransactionUpdated DATETIME,
     FOREIGN KEY (PaymentTransactionMethodUsed) REFERENCES PaymentMethods(PaymentMethodId),
@@ -349,3 +371,81 @@ CREATE TABLE IF NOT EXISTS EventsData (
     FOREIGN KEY (EventsDataConnectorId, EventsDataCompanyId, EventsDataSiteId, EventsDataChargerId) REFERENCES Connectors(ConnectorId, ConnectorCompanyId, ConnectorSiteId, ConnectorChargerId),
     FOREIGN KEY (EventsDataSessionId) REFERENCES ChargeSessions(ChargeSessionId)
 );
+
+-- Additional Indexes for Performance
+-- These indexes will improve query performance for common operations
+
+-- Index for company-based queries
+CREATE INDEX IF NOT EXISTS idx_sites_company ON Sites(SiteCompanyID);
+CREATE INDEX IF NOT EXISTS idx_chargers_company ON Chargers(ChargerCompanyId);
+CREATE INDEX IF NOT EXISTS idx_drivers_company ON Drivers(DriverCompanyId);
+CREATE INDEX IF NOT EXISTS idx_events_company ON EventsData(EventsDataCompanyId);
+CREATE INDEX IF NOT EXISTS idx_sessions_company ON ChargeSessions(ChargerSessionCompanyId);
+
+-- Index for site-based queries
+CREATE INDEX IF NOT EXISTS idx_chargers_site ON Chargers(ChargerSiteId);
+CREATE INDEX IF NOT EXISTS idx_events_site ON EventsData(EventsDataSiteId);
+CREATE INDEX IF NOT EXISTS idx_sessions_site ON ChargeSessions(ChargerSessionSiteId);
+
+-- Index for charger-based queries
+CREATE INDEX IF NOT EXISTS idx_connectors_charger ON Connectors(ConnectorChargerId);
+CREATE INDEX IF NOT EXISTS idx_events_charger ON EventsData(EventsDataChargerId);
+CREATE INDEX IF NOT EXISTS idx_sessions_charger ON ChargeSessions(ChargerSessionChargerId);
+
+-- Index for session-based queries
+CREATE INDEX IF NOT EXISTS idx_events_session ON EventsData(EventsDataSessionId);
+CREATE INDEX IF NOT EXISTS idx_payment_transactions_session ON PaymentTransactions(PaymentTransactionSessionId);
+
+-- Index for driver-based queries
+CREATE INDEX IF NOT EXISTS idx_rfid_cards_driver ON RFIDCards(RFIDCardDriverId);
+CREATE INDEX IF NOT EXISTS idx_sessions_driver ON ChargeSessions(ChargerSessionDriverId);
+CREATE INDEX IF NOT EXISTS idx_payment_transactions_driver ON PaymentTransactions(PaymentTransactionDriverId);
+
+-- Index for RFID card queries
+CREATE INDEX IF NOT EXISTS idx_sessions_rfid ON ChargeSessions(ChargerSessionRFIDCard);
+
+-- Index for datetime-based queries (for performance on time range queries)
+CREATE INDEX IF NOT EXISTS idx_events_datetime ON EventsData(EventsDataDateTime);
+CREATE INDEX IF NOT EXISTS idx_sessions_start ON ChargeSessions(ChargerSessionStart);
+CREATE INDEX IF NOT EXISTS idx_sessions_end ON ChargeSessions(ChargerSessionEnd);
+CREATE INDEX IF NOT EXISTS idx_payment_transactions_datetime ON PaymentTransactions(PaymentTransactionDateTime);
+
+-- Index for online status queries
+CREATE INDEX IF NOT EXISTS idx_chargers_online ON Chargers(ChargerIsOnline);
+
+-- Index for enabled status queries
+CREATE INDEX IF NOT EXISTS idx_companies_enabled ON Companies(CompanyEnabled);
+CREATE INDEX IF NOT EXISTS idx_sites_enabled ON Sites(SiteEnabled);
+CREATE INDEX IF NOT EXISTS idx_chargers_enabled ON Chargers(ChargerEnabled);
+CREATE INDEX IF NOT EXISTS idx_drivers_enabled ON Drivers(DriverEnabled);
+
+-- Index for payment status queries
+CREATE INDEX IF NOT EXISTS idx_sessions_payment_status ON ChargeSessions(ChargerSessionPaymentStatus);
+CREATE INDEX IF NOT EXISTS idx_payment_transactions_status ON PaymentTransactions(PaymentTransactionStatus);
+CREATE INDEX IF NOT EXISTS idx_payment_transactions_payment_status ON PaymentTransactions(PaymentTransactionPaymentStatus);
+
+-- Index for event type queries
+CREATE INDEX IF NOT EXISTS idx_events_type ON EventsData(EventsDataType);
+
+-- Composite indexes for common multi-column queries
+CREATE INDEX IF NOT EXISTS idx_chargers_company_site ON Chargers(ChargerCompanyId, ChargerSiteId);
+CREATE INDEX IF NOT EXISTS idx_connectors_company_site_charger ON Connectors(ConnectorCompanyId, ConnectorSiteId, ConnectorChargerId);
+CREATE INDEX IF NOT EXISTS idx_events_company_site_charger ON EventsData(EventsDataCompanyId, EventsDataSiteId, EventsDataChargerId);
+
+-- Comments for documentation
+-- This schema enforces the following unique constraints:
+-- 1. Company names are globally unique
+-- 2. Site names are unique within each company
+-- 3. Charger names are unique within each site
+-- 4. Site group names are unique within each company
+-- 5. Driver group names are unique within each company
+-- 6. Tariff names are unique within each company
+-- 7. Discount names are unique within each company
+-- 8. Payment method names are unique within each company
+-- 9. Driver emails are unique within each company (if provided)
+-- 10. User emails are globally unique
+-- 11. User role names are globally unique
+-- 12. Command labels are globally unique
+-- 13. Charger serial numbers are globally unique (if provided)
+-- 14. RFID card IDs are globally unique
+-- 15. Stripe payment intent IDs are globally unique
