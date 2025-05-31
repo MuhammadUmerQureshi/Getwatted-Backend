@@ -65,6 +65,53 @@ async def create_session_payment(request: CreateSessionPaymentRequest):
     try:
         from app.db.database import execute_query
         
+        # First, check if a payment intent already exists for this session
+        existing_payment = execute_query(
+            """SELECT pt.PaymentTransactionId, pt.PaymentTransactionStripeIntentId, pt.PaymentTransactionStatus, pt.PaymentTransactionAmount
+               FROM PaymentTransactions pt 
+               WHERE pt.PaymentTransactionSessionId = ? 
+               AND pt.PaymentTransactionStripeIntentId IS NOT NULL
+               ORDER BY pt.PaymentTransactionCreated DESC 
+               LIMIT 1""",
+            (request.session_id,)
+        )
+        
+        if existing_payment:
+            existing_intent_id = existing_payment[0]["PaymentTransactionStripeIntentId"]
+            existing_status = existing_payment[0]["PaymentTransactionStatus"]
+            existing_amount = existing_payment[0]["PaymentTransactionAmount"]
+            
+            # If payment is already completed, return error
+            if existing_status in ["completed", "succeeded", "paid"]:
+                raise HTTPException(
+                    status_code=422, 
+                    detail=f"Payment already completed for session {request.session_id}"
+                )
+            
+            # If payment exists but is pending, retrieve the existing intent
+            try:
+                existing_intent = stripe.PaymentIntent.retrieve(existing_intent_id)
+                
+                # If the intent is still valid and can be used
+                if existing_intent.status in ["requires_payment_method", "requires_confirmation"]:
+                    logger.info(f"🔄 Returning existing payment intent: {existing_intent_id}")
+                    return {
+                        "transaction_id": existing_payment[0].get("PaymentTransactionId"),
+                        "payment_intent": {
+                            "payment_intent_id": existing_intent.id,
+                            "client_secret": existing_intent.client_secret,
+                            "amount": existing_intent.amount,
+                            "currency": existing_intent.currency,
+                            "status": existing_intent.status
+                        },
+                        "session_id": request.session_id,
+                        "amount": existing_amount
+                    }
+                    
+            except stripe.error.StripeError as e:
+                logger.warning(f"⚠️ Could not retrieve existing intent {existing_intent_id}: {e}")
+                # Continue to create new intent if existing one is invalid
+        
         # Get session details
         session = execute_query(
             "SELECT ChargerSessionCost, ChargerSessionEnergyKWH FROM ChargeSessions WHERE ChargeSessionId = ?",
@@ -82,7 +129,7 @@ async def create_session_payment(request: CreateSessionPaymentRequest):
         if amount <= 0:
             raise HTTPException(status_code=400, detail="Invalid payment amount")
         
-        # Create payment intent
+        # Create new payment intent
         payment_intent = await PaymentService.create_payment_intent(
             amount=amount,
             description=request.description or f"Payment for charge session {request.session_id}",
@@ -98,7 +145,7 @@ async def create_session_payment(request: CreateSessionPaymentRequest):
             status="pending"
         )
         
-        logger.info(f"💳 Session payment created: Transaction {transaction_id}, Intent {payment_intent['payment_intent_id']}")
+        logger.info(f"💳 New session payment created: Transaction {transaction_id}, Intent {payment_intent['payment_intent_id']}")
         
         return {
             "transaction_id": transaction_id,
