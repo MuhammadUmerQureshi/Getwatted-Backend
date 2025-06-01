@@ -1,15 +1,13 @@
 # app/api/stripe_routes.py
-from fastapi import APIRouter, HTTPException, Request, Depends
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from typing import Optional
 import stripe
-import json
 import logging
-from datetime import datetime
 
 from app.services.payment_service import PaymentService
 
-router = APIRouter(prefix="/api/v1/stripe", tags=["stripe_payments"])
+router = APIRouter(prefix="/api/v1/stripe", tags=["STRIPE_PAYMENTS"])
 logger = logging.getLogger("ocpp.stripe")
 
 # Pydantic models for request validation
@@ -17,32 +15,59 @@ class CreatePaymentIntentRequest(BaseModel):
     amount: float  # Amount in currency units (e.g., dollars)
     currency: str = "usd"
     description: Optional[str] = None
-    session_id: Optional[int] = None
-    driver_id: Optional[int] = None
+    payment_intent_id: Optional[str] = None  # Optional: reuse existing intent
 
-class CreateSessionPaymentRequest(BaseModel):
-    session_id: int
-    payment_method_id: int
-    amount: Optional[float] = None  # If not provided, will use session cost
-    description: Optional[str] = None
+class CreatePaymentIntentResponse(BaseModel):
+    client_secret: str
+    payment_intent_id: str
 
 # Set your Stripe webhook secret here
 WEBHOOK_SECRET = "your_webhook_secret_here"  # Set this in environment variables
 
-@router.post("/create-payment-intent")
+@router.post("/create-payment-intent", response_model=CreatePaymentIntentResponse)
 async def create_payment_intent(request: CreatePaymentIntentRequest):
-    """Create a Stripe payment intent."""
+    """Create a Stripe payment intent or reuse existing one."""
     try:
+        # If payment_intent_id is provided, try to reuse existing intent
+        if request.payment_intent_id:
+            try:
+                # Retrieve existing PaymentIntent
+                intent = stripe.PaymentIntent.retrieve(request.payment_intent_id)
+                
+                # Check if intent can be reused
+                if intent.status in ['requires_payment_method', 'requires_confirmation', 'requires_action']:
+                    # Update amount if different (convert to cents)
+                    amount_cents = int(request.amount * 100)
+                    if intent.amount != amount_cents:
+                        intent = stripe.PaymentIntent.modify(
+                            request.payment_intent_id,
+                            amount=amount_cents,
+                        )
+                    
+                    logger.info(f"🔄 Reusing existing payment intent: {intent.id}")
+                    return CreatePaymentIntentResponse(
+                        client_secret=intent.client_secret,
+                        payment_intent_id=intent.id
+                    )
+                else:
+                    logger.info(f"⚠️ Intent {request.payment_intent_id} status {intent.status} cannot be reused")
+                    
+            except stripe.error.StripeError as e:
+                logger.warning(f"⚠️ Could not retrieve intent {request.payment_intent_id}: {e}")
+                # Continue to create new intent if reuse fails
+        
+        # Create new payment intent
         result = await PaymentService.create_payment_intent(
             amount=request.amount,
             currency=request.currency,
-            description=request.description,
-            session_id=request.session_id,
-            driver_id=request.driver_id
+            description=request.description
         )
         
-        logger.info(f"💳 Payment intent created: {result['payment_intent_id']}")
-        return result
+        logger.info(f"💳 New payment intent created: {result['payment_intent_id']}")
+        return CreatePaymentIntentResponse(
+            client_secret=result['client_secret'],
+            payment_intent_id=result['payment_intent_id']
+        )
         
     except Exception as e:
         logger.error(f"❌ Error creating payment intent: {str(e)}")
@@ -57,107 +82,6 @@ async def get_payment_intent(payment_intent_id: str):
         
     except Exception as e:
         logger.error(f"❌ Error retrieving payment intent: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/create-session-payment")
-async def create_session_payment(request: CreateSessionPaymentRequest):
-    """Create a payment intent for a specific charge session."""
-    try:
-        from app.db.database import execute_query
-        
-        # First, check if a payment intent already exists for this session
-        existing_payment = execute_query(
-            """SELECT pt.PaymentTransactionId, pt.PaymentTransactionStripeIntentId, pt.PaymentTransactionStatus, pt.PaymentTransactionAmount
-               FROM PaymentTransactions pt 
-               WHERE pt.PaymentTransactionSessionId = ? 
-               AND pt.PaymentTransactionStripeIntentId IS NOT NULL
-               ORDER BY pt.PaymentTransactionCreated DESC 
-               LIMIT 1""",
-            (request.session_id,)
-        )
-        
-        if existing_payment:
-            existing_intent_id = existing_payment[0]["PaymentTransactionStripeIntentId"]
-            existing_status = existing_payment[0]["PaymentTransactionStatus"]
-            existing_amount = existing_payment[0]["PaymentTransactionAmount"]
-            
-            # If payment is already completed, return error
-            if existing_status in ["completed", "succeeded", "paid"]:
-                raise HTTPException(
-                    status_code=422, 
-                    detail=f"Payment already completed for session {request.session_id}"
-                )
-            
-            # If payment exists but is pending, retrieve the existing intent
-            try:
-                existing_intent = stripe.PaymentIntent.retrieve(existing_intent_id)
-                
-                # If the intent is still valid and can be used
-                if existing_intent.status in ["requires_payment_method", "requires_confirmation"]:
-                    logger.info(f"🔄 Returning existing payment intent: {existing_intent_id}")
-                    return {
-                        "transaction_id": existing_payment[0].get("PaymentTransactionId"),
-                        "payment_intent": {
-                            "payment_intent_id": existing_intent.id,
-                            "client_secret": existing_intent.client_secret,
-                            "amount": existing_intent.amount,
-                            "currency": existing_intent.currency,
-                            "status": existing_intent.status
-                        },
-                        "session_id": request.session_id,
-                        "amount": existing_amount
-                    }
-                    
-            except stripe.error.StripeError as e:
-                logger.warning(f"⚠️ Could not retrieve existing intent {existing_intent_id}: {e}")
-                # Continue to create new intent if existing one is invalid
-        
-        # Get session details
-        session = execute_query(
-            "SELECT ChargerSessionCost, ChargerSessionEnergyKWH FROM ChargeSessions WHERE ChargeSessionId = ?",
-            (request.session_id,)
-        )
-        
-        if not session:
-            raise HTTPException(status_code=404, detail=f"Session {request.session_id} not found")
-        
-        session_data = session[0]
-        
-        # Use provided amount or session cost
-        amount = request.amount if request.amount is not None else session_data.get("ChargerSessionCost", 0)
-        
-        if amount <= 0:
-            raise HTTPException(status_code=400, detail="Invalid payment amount")
-        
-        # Create new payment intent
-        payment_intent = await PaymentService.create_payment_intent(
-            amount=amount,
-            description=request.description or f"Payment for charge session {request.session_id}",
-            session_id=request.session_id
-        )
-        
-        # Create payment transaction record
-        transaction_id = await PaymentService.create_payment_transaction_from_session(
-            session_id=request.session_id,
-            payment_method_id=request.payment_method_id,
-            amount=amount,
-            stripe_intent_id=payment_intent["payment_intent_id"],
-            status="pending"
-        )
-        
-        logger.info(f"💳 New session payment created: Transaction {transaction_id}, Intent {payment_intent['payment_intent_id']}")
-        
-        return {
-            "transaction_id": transaction_id,
-            "payment_intent": payment_intent,
-            "session_id": request.session_id,
-            "amount": amount
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Error creating session payment: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/webhook")
@@ -198,70 +122,3 @@ async def stripe_webhook(request: Request):
     except Exception as e:
         logger.error(f"❌ Webhook processing error: {str(e)}")
         raise HTTPException(status_code=500, detail="Webhook processing failed")
-
-@router.get("/recent-payments")
-async def get_recent_stripe_payments(limit: int = 10):
-    """Get recent Stripe payments for debugging."""
-    try:
-        payments = stripe.PaymentIntent.list(limit=limit)
-        
-        result = []
-        for payment in payments.data:
-            result.append({
-                "id": payment.id,
-                "amount": payment.amount / 100,  # Convert from cents
-                "currency": payment.currency,
-                "status": payment.status,
-                "created": datetime.fromtimestamp(payment.created).isoformat(),
-                "description": payment.description,
-                "metadata": payment.metadata
-            })
-        
-        return {"payments": result}
-        
-    except stripe.error.StripeError as e:
-        logger.error(f"❌ Stripe error: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-
-@router.post("/refund/{payment_intent_id}")
-async def refund_payment(payment_intent_id: str, amount: Optional[float] = None):
-    """Refund a payment (full or partial)."""
-    try:
-        # Get the payment intent
-        intent = stripe.PaymentIntent.retrieve(payment_intent_id)
-        
-        if intent.status != "succeeded":
-            raise HTTPException(status_code=400, detail="Payment not succeeded, cannot refund")
-        
-        # Calculate refund amount
-        refund_amount = None
-        if amount is not None:
-            refund_amount = int(amount * 100)  # Convert to cents
-        
-        # Create refund
-        refund = stripe.Refund.create(
-            payment_intent=payment_intent_id,
-            amount=refund_amount
-        )
-        
-        # Update transaction status
-        await PaymentService.update_payment_status(
-            stripe_intent_id=payment_intent_id,
-            status="refunded"
-        )
-        
-        logger.info(f"💰 Refund created: {refund.id} for payment {payment_intent_id}")
-        
-        return {
-            "refund_id": refund.id,
-            "amount": refund.amount / 100,
-            "status": refund.status,
-            "payment_intent_id": payment_intent_id
-        }
-        
-    except stripe.error.StripeError as e:
-        logger.error(f"❌ Stripe refund error: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"❌ Refund error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
