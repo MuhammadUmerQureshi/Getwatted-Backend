@@ -8,12 +8,12 @@ class PaymentSettings(BaseSettings):
     
     # Stripe Configuration
     stripe_secret_key: str = "sk_test_your_stripe_secret_key_here"
-    stripe_publishable_key: str = "pk_test_your_stripe_publishable_key_here"
-    stripe_webhook_secret: str = "whsec_your_webhook_secret_here"
+    # stripe_publishable_key: str = "pk_test_your_stripe_publishable_key_here"
+    # stripe_webhook_secret: str = "whsec_your_webhook_secret_here"
     
     # Payment defaults
     default_currency: str = "usd"
-    minimum_payment_amount: float = 0.50  # Minimum $0.50
+    minimum_payment_amount: float = 0.10  # Minimum $0.50
     maximum_payment_amount: float = 1000.00  # Maximum $1000
     
     # Environment

@@ -23,15 +23,9 @@ from app.api.event_routes import (
     session_router as event_session_router
 )
 
-# Import new payment routers
-from app.api.payment_method_routes import router as payment_method_router, company_router as payment_method_company_router
+from app.api.payment_method_routes import router as payment_method_router
 from app.api.payment_transaction_routes import (
-    router as payment_transaction_router,
-    company_router as payment_transaction_company_router,
-    site_router as payment_transaction_site_router,
-    charger_router as payment_transaction_charger_router,
-    driver_router as payment_transaction_driver_router,
-    session_router as payment_transaction_session_router
+    router as payment_transaction_router
 )
 from app.api.stripe_routes import router as stripe_router
 from app.api.session_payment_routes import router as session_payment_router
@@ -68,12 +62,6 @@ router.include_router(event_session_router)
 
 # Include new payment routers
 router.include_router(payment_method_router)
-router.include_router(payment_method_company_router)
 router.include_router(payment_transaction_router)
-router.include_router(payment_transaction_company_router)
-router.include_router(payment_transaction_site_router)
-router.include_router(payment_transaction_charger_router)
-router.include_router(payment_transaction_driver_router)
-router.include_router(payment_transaction_session_router)
 router.include_router(stripe_router)
 router.include_router(session_payment_router)

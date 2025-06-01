@@ -7,8 +7,8 @@ import logging
 from app.models.payment_method import PaymentMethod, PaymentMethodCreate, PaymentMethodUpdate
 from app.db.database import execute_query, execute_insert, execute_update, execute_delete
 
-router = APIRouter(prefix="/api/v1/payment_methods", tags=["payment_methods"])
-company_router = APIRouter(prefix="/api/v1/companies", tags=["companies"])
+router = APIRouter(prefix="/api/v1/payment_methods", tags=["PAYMENT_METHODS"])
+
 
 logger = logging.getLogger("ocpp.payment_methods")
 
@@ -186,33 +186,4 @@ async def delete_payment_method(payment_method_id: int):
         raise
     except Exception as e:
         logger.error(f"Error deleting payment method {payment_method_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-
-@company_router.get("/{company_id}/payment_methods", response_model=List[PaymentMethod])
-async def get_company_payment_methods(
-    company_id: int,
-    enabled: Optional[bool] = Query(None, description="Filter by enabled status")
-):
-    """Get all payment methods for a specific company."""
-    try:
-        # Check if company exists
-        company = execute_query("SELECT 1 FROM Companies WHERE CompanyId = ?", (company_id,))
-        if not company:
-            raise HTTPException(status_code=404, detail=f"Company with ID {company_id} not found")
-            
-        query = "SELECT * FROM PaymentMethods WHERE PaymentMethodCompanyId = ?"
-        params = [company_id]
-        
-        if enabled is not None:
-            query += " AND PaymentMethodEnabled = ?"
-            params.append(1 if enabled else 0)
-            
-        query += " ORDER BY PaymentMethodName"
-        
-        payment_methods = execute_query(query, tuple(params))
-        return payment_methods
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting payment methods for company {company_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
