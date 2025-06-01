@@ -74,7 +74,7 @@ class PaymentSyncService:
         """
         status_mapping = {
             "pending": "pending",
-            "completed": "paid",
+            "succeeded": "paid",
             "failed": "failed",
             "canceled": "canceled",
             "refunded": "refunded"

@@ -21,7 +21,7 @@ class SessionPaymentService:
         Args:
             session_id: Charge session ID
             payment_transaction_id: Payment transaction ID
-            payment_status: Payment status (pending, completed, failed, canceled, refunded)
+            payment_status: Payment status (pending, succeeded, failed, canceled, refunded)
             
         Returns:
             True if successful
@@ -48,7 +48,7 @@ class SessionPaymentService:
     async def update_payment_transaction_status(
         transaction_id: Optional[int] = None,
         stripe_intent_id: Optional[str] = None,
-        payment_status: str = "completed"
+        payment_status: str = "succeeded"
     ) -> bool:
         """
         Update payment transaction status and sync with charge session.
@@ -224,7 +224,7 @@ class SessionPaymentService:
             return await SessionPaymentService.update_session_payment_status(
                 session_id=session_id,
                 payment_transaction_id=payment_transaction_id,
-                payment_status="completed"
+                payment_status="succeeded"
             )
             
         except Exception as e:

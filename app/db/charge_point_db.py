@@ -600,7 +600,7 @@ def create_payment_transaction_for_session(session_data, session_id, amount):
                 session_data["ChargerSessionDriverId"],
                 now,
                 amount,
-                "completed",  # Transaction status - completed session
+                "pending",  
                 "pending",    # Payment status - awaiting payment
                 session_data["ChargerSessionCompanyId"],
                 session_data["ChargerSessionSiteId"],

@@ -6,6 +6,7 @@ import stripe
 import logging
 
 from app.services.payment_service import PaymentService
+from app.db.database import execute_query
 
 router = APIRouter(prefix="/api/v1/stripe", tags=["STRIPE_PAYMENTS"])
 logger = logging.getLogger("ocpp.stripe")
@@ -15,60 +16,110 @@ class CreatePaymentIntentRequest(BaseModel):
     amount: float  # Amount in currency units (e.g., dollars)
     currency: str = "usd"
     description: Optional[str] = None
-    payment_intent_id: Optional[str] = None  # Optional: reuse existing intent
+    session_id: Optional[int] = None  # Session ID to check existing payment transactions
 
 class CreatePaymentIntentResponse(BaseModel):
     client_secret: str
     payment_intent_id: str
+    status: str = "created"
 
 # Set your Stripe webhook secret here
 WEBHOOK_SECRET = "your_webhook_secret_here"  # Set this in environment variables
 
+# Stripe PaymentIntent Status Reference:
+# - requires_payment_method: Needs a payment method attached
+# - requires_confirmation: Payment method attached, needs confirmation  
+# - requires_action: Additional action required (e.g., 3D Secure authentication)
+# - requires_capture: Payment authorized but not yet captured
+# - processing: Payment is being processed (async payment methods)
+# - succeeded: Payment completed successfully
+# - canceled: Payment was canceled
+
 @router.post("/create-payment-intent", response_model=CreatePaymentIntentResponse)
 async def create_payment_intent(request: CreatePaymentIntentRequest):
-    """Create a Stripe payment intent or reuse existing one."""
+    """Create a Stripe payment intent with payment transaction status checking."""
     try:
-        # If payment_intent_id is provided, try to reuse existing intent
-        if request.payment_intent_id:
-            try:
-                # Retrieve existing PaymentIntent
-                intent = stripe.PaymentIntent.retrieve(request.payment_intent_id)
+        # 1. Check existing payment transaction status if session_id is provided
+        if request.session_id:
+            existing_transaction = execute_query(
+                """
+                SELECT PaymentTransactionId, PaymentTransactionPaymentStatus, 
+                       PaymentTransactionStripeIntentId, PaymentTransactionAmount
+                FROM PaymentTransactions 
+                WHERE PaymentTransactionSessionId = ?
+                ORDER BY PaymentTransactionCreated DESC LIMIT 1
+                """,
+                (request.session_id,)
+            )
+            
+            if existing_transaction:
+                transaction_data = existing_transaction[0]
+                payment_status = transaction_data["PaymentTransactionPaymentStatus"]
+                stripe_intent_id = transaction_data["PaymentTransactionStripeIntentId"]
                 
-                # Check if intent can be reused
-                if intent.status in ['requires_payment_method', 'requires_confirmation', 'requires_action']:
-                    # Update amount if different (convert to cents)
-                    amount_cents = int(request.amount * 100)
-                    if intent.amount != amount_cents:
-                        intent = stripe.PaymentIntent.modify(
-                            request.payment_intent_id,
-                            amount=amount_cents,
-                        )
-                    
-                    logger.info(f"🔄 Reusing existing payment intent: {intent.id}")
-                    return CreatePaymentIntentResponse(
-                        client_secret=intent.client_secret,
-                        payment_intent_id=intent.id
+                # 1. If status is succeeded, don't process again
+                if payment_status == "completed":
+                    logger.info(f"🚫 Payment already succeeded for session {request.session_id}")
+                    raise HTTPException(
+                        status_code=400, 
+                        detail="Payment already completed for this session"
                     )
-                else:
-                    logger.info(f"⚠️ Intent {request.payment_intent_id} status {intent.status} cannot be reused")
-                    
-            except stripe.error.StripeError as e:
-                logger.warning(f"⚠️ Could not retrieve intent {request.payment_intent_id}: {e}")
-                # Continue to create new intent if reuse fails
+                
+                # 3. If payment intent exists and status is not succeeded, use same intent
+                if stripe_intent_id and payment_status != "completed":
+                    try:
+                        # Retrieve existing PaymentIntent from Stripe
+                        intent = stripe.PaymentIntent.retrieve(stripe_intent_id)
+                        
+                        # Check if intent can be reused based on Stripe PaymentIntent statuses
+                        # Reusable statuses: requires_payment_method, requires_confirmation, requires_action, requires_capture
+                        # Non-reusable statuses: succeeded, processing, canceled
+                        reusable_statuses = [
+                            'requires_payment_method', 
+                            'requires_confirmation', 
+                            'requires_action',
+                            'requires_capture'
+                        ]
+                        
+                        if intent.status in reusable_statuses:
+                            # Update amount if different (convert to cents)
+                            amount_cents = int(request.amount * 100)
+                            if intent.amount != amount_cents:
+                                intent = stripe.PaymentIntent.modify(
+                                    stripe_intent_id,
+                                    amount=amount_cents,
+                                )
+                            
+                            logger.info(f"🔄 Reusing existing payment intent: {intent.id} (status: {intent.status})")
+                            return CreatePaymentIntentResponse(
+                                client_secret=intent.client_secret,
+                                payment_intent_id=intent.id,
+                                status="reused"
+                            )
+                        else:
+                            logger.info(f"⚠️ Intent {stripe_intent_id} status '{intent.status}' cannot be reused")
+                            
+                    except stripe.error.StripeError as e:
+                        logger.warning(f"⚠️ Could not retrieve intent {stripe_intent_id}: {e}")
+                        # Continue to create new intent if reuse fails
         
-        # Create new payment intent
+        # 2. If payment intent id is null or doesn't exist, create new payment intent
         result = await PaymentService.create_payment_intent(
             amount=request.amount,
             currency=request.currency,
-            description=request.description
+            description=request.description,
+            session_id=request.session_id
         )
         
         logger.info(f"💳 New payment intent created: {result['payment_intent_id']}")
         return CreatePaymentIntentResponse(
             client_secret=result['client_secret'],
-            payment_intent_id=result['payment_intent_id']
+            payment_intent_id=result['payment_intent_id'],
+            status="created"
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"❌ Error creating payment intent: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
