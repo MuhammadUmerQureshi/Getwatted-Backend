@@ -4,9 +4,11 @@ from pydantic import BaseModel
 from typing import Optional
 import stripe
 import logging
+import json
+from datetime import datetime
 
 from app.services.payment_service import PaymentService
-from app.db.database import execute_query
+from app.db.database import execute_query, execute_update
 
 router = APIRouter(prefix="/api/v1/stripe", tags=["STRIPE_PAYMENTS"])
 logger = logging.getLogger("ocpp.stripe")
@@ -16,15 +18,15 @@ class CreatePaymentIntentRequest(BaseModel):
     amount: float  # Amount in currency units (e.g., dollars)
     currency: str = "usd"
     description: Optional[str] = None
-    session_id: Optional[int] = None  # Session ID to check existing payment transactions
+    session_id: Optional[int] = None  # Session ID to link payment transaction
 
 class CreatePaymentIntentResponse(BaseModel):
     client_secret: str
     payment_intent_id: str
     status: str = "created"
 
-# Set your Stripe webhook secret here
-WEBHOOK_SECRET = "your_webhook_secret_here"  # Set this in environment variables
+# Set your Stripe webhook secret here - REPLACE WITH YOUR ACTUAL SECRET
+WEBHOOK_SECRET = "whsec_DXsICWF7x2vcEXkQMBUUmjeESlLPJsZP"
 
 # Stripe PaymentIntent Status Reference:
 # - requires_payment_method: Needs a payment method attached
@@ -37,8 +39,10 @@ WEBHOOK_SECRET = "your_webhook_secret_here"  # Set this in environment variables
 
 @router.post("/create-payment-intent", response_model=CreatePaymentIntentResponse)
 async def create_payment_intent(request: CreatePaymentIntentRequest):
-    """Create a Stripe payment intent with payment transaction status checking."""
+    """Create a Stripe payment intent with payment transaction status checking and linking."""
     try:
+        existing_transaction = None
+        
         # 1. Check existing payment transaction status if session_id is provided
         if request.session_id:
             existing_transaction = execute_query(
@@ -65,7 +69,7 @@ async def create_payment_intent(request: CreatePaymentIntentRequest):
                         detail="Payment already completed for this session"
                     )
                 
-                # 3. If payment intent exists and status is not succeeded, use same intent
+                # 2. If payment intent exists and status is not succeeded, try to reuse same intent
                 if stripe_intent_id and payment_status != "completed":
                     try:
                         # Retrieve existing PaymentIntent from Stripe
@@ -103,13 +107,29 @@ async def create_payment_intent(request: CreatePaymentIntentRequest):
                         logger.warning(f"⚠️ Could not retrieve intent {stripe_intent_id}: {e}")
                         # Continue to create new intent if reuse fails
         
-        # 2. If payment intent id is null or doesn't exist, create new payment intent
+        # 2. Create new payment intent
         result = await PaymentService.create_payment_intent(
             amount=request.amount,
             currency=request.currency,
             description=request.description,
             session_id=request.session_id
         )
+        
+        # 3. CRITICAL FIX: Link the Stripe intent ID to existing payment transaction
+        if request.session_id and existing_transaction:
+            transaction_id = existing_transaction[0]["PaymentTransactionId"]
+            
+            # Update the existing transaction with Stripe intent ID
+            execute_update(
+                """
+                UPDATE PaymentTransactions 
+                SET PaymentTransactionStripeIntentId = ?, PaymentTransactionUpdated = ?
+                WHERE PaymentTransactionId = ?
+                """,
+                (result['payment_intent_id'], datetime.now().isoformat(), transaction_id)
+            )
+            
+            logger.info(f"✅ Linked Stripe intent {result['payment_intent_id']} to transaction {transaction_id}")
         
         logger.info(f"💳 New payment intent created: {result['payment_intent_id']}")
         return CreatePaymentIntentResponse(
@@ -173,3 +193,4 @@ async def stripe_webhook(request: Request):
     except Exception as e:
         logger.error(f"❌ Webhook processing error: {str(e)}")
         raise HTTPException(status_code=500, detail="Webhook processing failed")
+

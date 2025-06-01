@@ -9,7 +9,7 @@ class PaymentSettings(BaseSettings):
     # Stripe Configuration
     stripe_secret_key: str = "sk_test_your_stripe_secret_key_here"
     # stripe_publishable_key: str = "pk_test_your_stripe_publishable_key_here"
-    # stripe_webhook_secret: str = "whsec_your_webhook_secret_here"
+    stripe_webhook_secret: str = "whsec_your_webhook_secret_here"
     
     # Payment defaults
     default_currency: str = "usd"

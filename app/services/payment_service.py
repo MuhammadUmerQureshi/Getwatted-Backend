@@ -263,7 +263,7 @@ class PaymentService:
                 # Update transaction status to completed
                 await PaymentService.update_payment_status(
                     stripe_intent_id=stripe_intent_id,
-                    payment_status="completed"
+                    payment_status="succeeded"
                 )
                 
                 logger.info(f"✅ Payment succeeded webhook handled: {stripe_intent_id}")
