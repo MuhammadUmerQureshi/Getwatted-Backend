@@ -1,4 +1,4 @@
--- Complete OCPP Database Schema with Unique Constraints
+-- Complete OCPP Database Schema with Unique Constraints and Auto Driver Creation
 -- This file creates all tables with proper relationships and unique constraints
 
 -- Companies Table
@@ -118,7 +118,7 @@ CREATE TABLE IF NOT EXISTS Drivers (
     DriverFullName VARCHAR(255) NOT NULL,
     DriverEmail VARCHAR(255),
     DriverPhone VARCHAR(50),
-    DriverGroupId INT NOT NULL, -- Make this NOT NULL since every driver must belong to a group
+    DriverGroupId INT, -- Make this nullable since it will be set later
     DriverNotifActions BOOLEAN,
     DriverNotifPayments BOOLEAN,
     DriverNotifSystem BOOLEAN,
@@ -372,6 +372,55 @@ CREATE TABLE IF NOT EXISTS EventsData (
     FOREIGN KEY (EventsDataSessionId) REFERENCES ChargeSessions(ChargeSessionId)
 );
 
+-- Insert Default User Roles
+INSERT IGNORE INTO UserRoles (UserRoleId, UserRoleName, UserRoleLevel, UserRoleCreated, UserRoleUpdated)
+VALUES 
+(1, 'Super Admin', 3, NOW(), NOW()),
+(2, 'Admin', 2, NOW(), NOW()),
+(3, 'Driver', 1, NOW(), NOW());
+
+-- Create trigger to automatically create driver when user with Driver role is created
+DELIMITER //
+
+CREATE TRIGGER after_user_insert_create_driver
+AFTER INSERT ON Users
+FOR EACH ROW
+BEGIN
+    DECLARE driver_role_id INT;
+    DECLARE next_driver_id INT;
+    
+    -- Get the Driver role ID
+    SELECT UserRoleId INTO driver_role_id 
+    FROM UserRoles 
+    WHERE UserRoleName = 'Driver';
+    
+    -- Only proceed if the new user has Driver role
+    IF NEW.UserRoleId = driver_role_id THEN
+        -- Get the next driver ID (max + 1)
+        SELECT COALESCE(MAX(DriverId), 0) + 1 INTO next_driver_id 
+        FROM Drivers;
+        
+        -- Create the driver record with minimal fields only
+        INSERT INTO Drivers (
+            DriverId,
+            DriverEnabled,
+            DriverFullName,
+            DriverPhone,
+            DriverCreated,
+            DriverUpdated
+        ) VALUES (
+            next_driver_id, -- Auto-incremented driver ID
+            FALSE, -- Disabled by default
+            CONCAT(COALESCE(NEW.UserFirstName, ''), ' ', COALESCE(NEW.UserLastName, '')),
+            NEW.UserPhone,
+            NOW(),
+            NOW()
+        );
+    END IF;
+END//
+
+DELIMITER ;
+
 -- Additional Indexes for Performance
 -- These indexes will improve query performance for common operations
 
@@ -449,3 +498,8 @@ CREATE INDEX IF NOT EXISTS idx_events_company_site_charger ON EventsData(EventsD
 -- 13. Charger serial numbers are globally unique (if provided)
 -- 14. RFID card IDs are globally unique
 -- 15. Stripe payment intent IDs are globally unique
+
+-- Auto Driver Creation:
+-- When a user with 'Driver' role is created, a corresponding driver record is automatically
+-- created with minimal fields (DriverId, DriverEnabled=FALSE, DriverFullName, DriverPhone, 
+-- DriverCreated, DriverUpdated). All other driver fields remain NULL and can be updated later.
