@@ -192,8 +192,10 @@ CREATE TABLE IF NOT EXISTS Users (
     UserPaymentMethodId INT,
     UserCreated DATETIME,
     UserUpdated DATETIME,
+    UserCompanyId INT,
     FOREIGN KEY (UserRoleId) REFERENCES UserRoles(UserRoleId),
     FOREIGN KEY (UserPaymentMethodId) REFERENCES PaymentMethods(PaymentMethodId)
+    FOREIGN KEY (UserCompanyId) REFERENCES Companies(CompanyId)
 );
 
 -- Settings Table
