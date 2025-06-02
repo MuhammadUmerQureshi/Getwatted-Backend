@@ -5,7 +5,7 @@ import logging
 
 from app.services.session_payment_service import SessionPaymentService
 
-router = APIRouter(prefix="/api/v1/session_payments", tags=["session_payments"])
+router = APIRouter(prefix="/api/v1/session_payments", tags=["SESSION_PAYMENTS"])
 
 logger = logging.getLogger("ocpp.session_payments")
 

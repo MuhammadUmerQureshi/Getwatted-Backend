@@ -373,11 +373,15 @@ CREATE TABLE IF NOT EXISTS EventsData (
 );
 
 -- Insert Default User Roles
-INSERT IGNORE INTO UserRoles (UserRoleId, UserRoleName, UserRoleLevel, UserRoleCreated, UserRoleUpdated)
+INSERT INTO UserRoles (UserRoleId, UserRoleName, UserRoleLevel, UserRoleCreated, UserRoleUpdated)
 VALUES 
 (1, 'Super Admin', 3, NOW(), NOW()),
 (2, 'Admin', 2, NOW(), NOW()),
-(3, 'Driver', 1, NOW(), NOW());
+(3, 'Driver', 1, NOW(), NOW())
+ON DUPLICATE KEY UPDATE 
+    UserRoleName = VALUES(UserRoleName),
+    UserRoleLevel = VALUES(UserRoleLevel),
+    UserRoleUpdated = NOW();
 
 -- Create trigger to automatically create driver when user with Driver role is created
 DELIMITER //
