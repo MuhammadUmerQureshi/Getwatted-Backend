@@ -5,7 +5,14 @@ from datetime import datetime, timedelta
 import logging
 
 from app.models.event import EventData, EventSummary, EventTypeStats
+from app.models.auth import UserInToken
 from app.db.database import execute_query
+from app.dependencies.auth import (
+    require_role,
+    get_current_user,
+    require_admin_or_higher,
+    check_company_access
+)
 
 router = APIRouter(prefix="/api/v1/events", tags=["EVENTS"])
 company_router = APIRouter(prefix="/api/v1/companies", tags=["COMPANIES"])
@@ -28,15 +35,24 @@ async def get_events(
     limit: int = Query(100, description="Limit number of results"),
     offset: int = Query(0, description="Offset for pagination"),
     order_by: str = Query("EventsDataDateTime", description="Order by field"),
-    sort_direction: str = Query("DESC", description="Sort direction (ASC/DESC)")
+    sort_direction: str = Query("DESC", description="Sort direction (ASC/DESC)"),
+    user: UserInToken = Depends(require_admin_or_higher)
 ):
-    """Get a list of events with optional filtering."""
+    """
+    Get a list of events with optional filtering.
+    
+    - SuperAdmin: Can see all events
+    - Admin: Can only see events from their company
+    - Driver: Not allowed to access this endpoint
+    """
     try:
         query = "SELECT * FROM EventsData"
         params = []
-        
-        # Build WHERE clause for filters
         filters = []
+        
+        # Apply company filter based on role
+        if user.role.value != "SuperAdmin":
+            company_id = user.company_id
         
         if company_id is not None:
             filters.append("EventsDataCompanyId = ?")
@@ -88,8 +104,17 @@ async def get_events(
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @router.get("/{event_id}", response_model=EventData)
-async def get_event(event_id: int):
-    """Get details of a specific event by ID."""
+async def get_event(
+    event_id: int,
+    user: UserInToken = Depends(require_admin_or_higher)
+):
+    """
+    Get details of a specific event by ID.
+    
+    - SuperAdmin: Can see any event
+    - Admin: Can only see events from their company
+    - Driver: Not allowed to access this endpoint
+    """
     try:
         event = execute_query(
             "SELECT * FROM EventsData WHERE EventsDataNumber = ?", 
@@ -97,7 +122,18 @@ async def get_event(event_id: int):
         )
         
         if not event:
-            raise HTTPException(status_code=404, detail=f"Event with ID {event_id} not found")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Event with ID {event_id} not found"
+            )
+            
+        # Check company access
+        if user.role.value != "SuperAdmin":
+            if event[0]["EventsDataCompanyId"] != user.company_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You can only view events from your company"
+                )
             
         return event[0]
     except HTTPException:
@@ -115,15 +151,20 @@ async def get_company_events(
     start_date: Optional[datetime] = Query(None, description="Filter by start date (from)"),
     end_date: Optional[datetime] = Query(None, description="Filter by end date (to)"),
     limit: int = Query(100, description="Limit number of results"),
-    offset: int = Query(0, description="Offset for pagination")
+    offset: int = Query(0, description="Offset for pagination"),
+    user: UserInToken = Depends(require_admin_or_higher)
 ):
-    """Get all events for a specific company."""
+    """
+    Get all events for a specific company.
+    
+    - SuperAdmin: Can see events from any company
+    - Admin: Can only see events from their company
+    - Driver: Not allowed to access this endpoint
+    """
     try:
-        # Check if company exists
-        company = execute_query("SELECT 1 FROM Companies WHERE CompanyId = ?", (company_id,))
-        if not company:
-            raise HTTPException(status_code=404, detail=f"Company with ID {company_id} not found")
-            
+        # Check company access
+        check_company_access(user, company_id)
+
         query = "SELECT * FROM EventsData WHERE EventsDataCompanyId = ?"
         params = [company_id]
         
@@ -144,8 +185,6 @@ async def get_company_events(
         
         events = execute_query(query, tuple(params))
         return events
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Error getting events for company {company_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
@@ -159,9 +198,16 @@ async def get_site_events(
     start_date: Optional[datetime] = Query(None, description="Filter by start date (from)"),
     end_date: Optional[datetime] = Query(None, description="Filter by end date (to)"),
     limit: int = Query(100, description="Limit number of results"),
-    offset: int = Query(0, description="Offset for pagination")
+    offset: int = Query(0, description="Offset for pagination"),
+    user: UserInToken = Depends(require_admin_or_higher)
 ):
-    """Get all events for a specific site."""
+    """
+    Get all events for a specific site.
+    
+    - SuperAdmin: Can see events from any site
+    - Admin: Can only see events from their company's sites
+    - Driver: Not allowed to access this endpoint
+    """
     try:
         # Check if site exists and belongs to the company
         site = execute_query(
@@ -215,9 +261,16 @@ async def get_charger_events(
     start_date: Optional[datetime] = Query(None, description="Filter by start date (from)"),
     end_date: Optional[datetime] = Query(None, description="Filter by end date (to)"),
     limit: int = Query(100, description="Limit number of results"),
-    offset: int = Query(0, description="Offset for pagination")
+    offset: int = Query(0, description="Offset for pagination"),
+    user: UserInToken = Depends(require_admin_or_higher)
 ):
-    """Get all events for a specific charger."""
+    """
+    Get all events for a specific charger.
+    
+    - SuperAdmin: Can see events from any charger
+    - Admin: Can only see events from their company's chargers
+    - Driver: Not allowed to access this endpoint
+    """
     try:
         # Check if charger exists
         charger = execute_query(
@@ -226,7 +279,10 @@ async def get_charger_events(
         )
         
         if not charger:
-            raise HTTPException(status_code=404, detail=f"Charger with ID {charger_id} not found")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Charger with ID {charger_id} not found"
+            )
             
         query = """
             SELECT * FROM EventsData 
@@ -266,18 +322,47 @@ async def get_session_events(
     session_id: int,
     event_type: Optional[str] = Query(None, description="Filter by event type"),
     limit: int = Query(100, description="Limit number of results"),
-    offset: int = Query(0, description="Offset for pagination")
+    offset: int = Query(0, description="Offset for pagination"),
+    user: UserInToken = Depends(require_admin_or_higher)
 ):
-    """Get all events for a specific charge session."""
+    """
+    Get all events for a specific charge session.
+    
+    - SuperAdmin: Can see events from any session
+    - Admin: Can only see events from their company's sessions
+    - Driver: Can only see events from their own sessions
+    """
     try:
-        # Check if session exists
+        # Get session details
         session = execute_query(
-            "SELECT 1 FROM ChargeSessions WHERE ChargeSessionId = ?", 
+            """
+            SELECT cs.*, c.ChargerCompanyId 
+            FROM ChargeSessions cs
+            JOIN Chargers c ON cs.ChargerSessionChargerId = c.ChargerId
+            WHERE cs.ChargeSessionId = ?
+            """, 
             (session_id,)
         )
         
         if not session:
-            raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Session with ID {session_id} not found"
+            )
+            
+        # Check access based on role
+        if user.role.value == "Driver":
+            if session[0]["ChargerSessionDriverId"] != user.driver_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You can only view events from your own sessions"
+                )
+        elif user.role.value == "Admin":
+            if session[0]["ChargerCompanyId"] != user.company_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You can only view events from your company's sessions"
+                )
             
         query = "SELECT * FROM EventsData WHERE EventsDataSessionId = ?"
         params = [session_id]
@@ -303,15 +388,17 @@ async def get_session_events(
 async def get_company_events_summary(
     company_id: int,
     start_date: Optional[datetime] = Query(None, description="Filter by start date (from)"),
-    end_date: Optional[datetime] = Query(None, description="Filter by end date (to)")
+    end_date: Optional[datetime] = Query(None, description="Filter by end date (to)"),
+    user: UserInToken = Depends(require_admin_or_higher)
 ):
-    """Get event summary statistics for a company."""
+    """
+    Get event summary statistics for a company.
+    
+    - SuperAdmin: Can see summary for any company
+    - Admin: Can only see summary for their company
+    - Driver: Not allowed to access this endpoint
+    """
     try:
-        # Check if company exists
-        company = execute_query("SELECT 1 FROM Companies WHERE CompanyId = ?", (company_id,))
-        if not company:
-            raise HTTPException(status_code=404, detail=f"Company with ID {company_id} not found")
-            
         # Build base query
         base_where = "WHERE EventsDataCompanyId = ?"
         params = [company_id]
@@ -357,8 +444,6 @@ async def get_company_events_summary(
             },
             latest_event=datetime.fromisoformat(latest_event[0]["latest"]) if latest_event and latest_event[0]["latest"] else None
         )
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Error getting event summary for company {company_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
@@ -368,9 +453,16 @@ async def get_site_events_by_type(
     site_id: int,
     company_id: int = Query(..., description="Company ID"),
     start_date: Optional[datetime] = Query(None, description="Filter by start date (from)"),
-    end_date: Optional[datetime] = Query(None, description="Filter by end date (to)")
+    end_date: Optional[datetime] = Query(None, description="Filter by end date (to)"),
+    user: UserInToken = Depends(require_admin_or_higher)
 ):
-    """Get event statistics by type for a specific site."""
+    """
+    Get event statistics by type for a specific site.
+    
+    - SuperAdmin: Can see stats for any site
+    - Admin: Can only see stats for their company's sites
+    - Driver: Not allowed to access this endpoint
+    """
     try:
         # Check if site exists and belongs to the company
         site = execute_query(
@@ -429,9 +521,16 @@ async def get_charger_latest_events(
     company_id: int = Query(..., description="Company ID"),
     site_id: int = Query(..., description="Site ID"),
     hours: int = Query(24, description="Number of hours to look back"),
-    limit: int = Query(50, description="Limit number of results")
+    limit: int = Query(50, description="Limit number of results"),
+    user: UserInToken = Depends(require_admin_or_higher)
 ):
-    """Get latest events for a specific charger within specified hours."""
+    """
+    Get latest events for a specific charger within specified hours.
+    
+    - SuperAdmin: Can see events from any charger
+    - Admin: Can only see events from their company's chargers
+    - Driver: Not allowed to access this endpoint
+    """
     try:
         # Check if charger exists
         charger = execute_query(
@@ -440,7 +539,10 @@ async def get_charger_latest_events(
         )
         
         if not charger:
-            raise HTTPException(status_code=404, detail=f"Charger with ID {charger_id} not found")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Charger with ID {charger_id} not found"
+            )
         
         # Calculate cutoff time
         cutoff_time = datetime.now() - timedelta(hours=hours)

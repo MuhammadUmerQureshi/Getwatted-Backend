@@ -1,5 +1,5 @@
--- Complete OCPP Database Schema with Unique Constraints and Auto Driver Creation
--- This file creates all tables with proper relationships and unique constraints
+-- Complete OCPP Database Schema with Authentication and Unique Constraints
+-- This file creates all tables with proper relationships, unique constraints, and authentication
 
 -- Companies Table
 CREATE TABLE IF NOT EXISTS Companies (
@@ -12,6 +12,32 @@ CREATE TABLE IF NOT EXISTS Companies (
     CompanyBrandFavicon VARCHAR(255),
     CompanyCreated DATETIME,
     CompanyUpdated DATETIME
+);
+
+-- UserRoles Table (Authentication)
+CREATE TABLE IF NOT EXISTS UserRoles (
+    UserRoleId INT PRIMARY KEY,
+    UserRoleName VARCHAR(255) NOT NULL UNIQUE, -- Role names should be globally unique
+    UserRoleLevel INT,
+    UserRoleCreated DATETIME,
+    UserRoleUpdated DATETIME
+);
+
+-- Users Table (Authentication)
+CREATE TABLE IF NOT EXISTS Users (
+    UserId INT PRIMARY KEY,
+    UserRoleId INT,
+    UserFirstName VARCHAR(100),
+    UserLastName VARCHAR(100),
+    UserEmail VARCHAR(255) UNIQUE, -- User emails should be globally unique
+    UserPhone VARCHAR(50),
+    UserPaymentMethodId INT,
+    UserCompanyId INT,
+    UserPasswordHash VARCHAR(255), -- For authentication
+    UserCreated DATETIME,
+    UserUpdated DATETIME,
+    FOREIGN KEY (UserRoleId) REFERENCES UserRoles(UserRoleId),
+    FOREIGN KEY (UserCompanyId) REFERENCES Companies(CompanyId)
 );
 
 -- SitesGroup Table
@@ -122,10 +148,12 @@ CREATE TABLE IF NOT EXISTS Drivers (
     DriverNotifActions BOOLEAN,
     DriverNotifPayments BOOLEAN,
     DriverNotifSystem BOOLEAN,
+    DriverUserId INT, -- Link to Users table for authentication
     DriverCreated DATETIME,
     DriverUpdated DATETIME,
     FOREIGN KEY (DriverCompanyId) REFERENCES Companies(CompanyId),
     FOREIGN KEY (DriverGroupId) REFERENCES DriversGroup(DriversGroupId),
+    FOREIGN KEY (DriverUserId) REFERENCES Users(UserId),
     -- Driver emails should be unique within each company (if provided)
     UNIQUE(DriverCompanyId, DriverEmail)
 );
@@ -170,32 +198,6 @@ CREATE TABLE IF NOT EXISTS RFIDCards (
     RFIDCardUpdated DATETIME,
     FOREIGN KEY (RFIDCardCompanyId) REFERENCES Companies(CompanyId),
     FOREIGN KEY (RFIDCardDriverId) REFERENCES Drivers(DriverId)
-);
-
--- UserRoles Table
-CREATE TABLE IF NOT EXISTS UserRoles (
-    UserRoleId INT PRIMARY KEY,
-    UserRoleName VARCHAR(255) NOT NULL UNIQUE, -- Role names should be globally unique
-    UserRoleLevel INT,
-    UserRoleCreated DATETIME,
-    UserRoleUpdated DATETIME
-);
-
--- Users Table
-CREATE TABLE IF NOT EXISTS Users (
-    UserId INT PRIMARY KEY,
-    UserRoleId INT,
-    UserFirstName VARCHAR(100),
-    UserLastName VARCHAR(100),
-    UserEmail VARCHAR(255) UNIQUE, -- User emails should be globally unique
-    UserPhone VARCHAR(50),
-    UserPaymentMethodId INT,
-    UserCreated DATETIME,
-    UserUpdated DATETIME,
-    UserCompanyId INT,
-    FOREIGN KEY (UserRoleId) REFERENCES UserRoles(UserRoleId),
-    FOREIGN KEY (UserPaymentMethodId) REFERENCES PaymentMethods(PaymentMethodId)
-    FOREIGN KEY (UserCompanyId) REFERENCES Companies(CompanyId)
 );
 
 -- Settings Table
@@ -375,60 +377,157 @@ CREATE TABLE IF NOT EXISTS EventsData (
 );
 
 -- Insert Default User Roles
-INSERT INTO UserRoles (UserRoleId, UserRoleName, UserRoleLevel, UserRoleCreated, UserRoleUpdated)
+INSERT OR REPLACE INTO UserRoles (UserRoleId, UserRoleName, UserRoleLevel, UserRoleCreated, UserRoleUpdated)
 VALUES 
-(1, 'Super Admin', 3, NOW(), NOW()),
-(2, 'Admin', 2, NOW(), NOW()),
-(3, 'Driver', 1, NOW(), NOW())
-ON DUPLICATE KEY UPDATE 
-    UserRoleName = VALUES(UserRoleName),
-    UserRoleLevel = VALUES(UserRoleLevel),
-    UserRoleUpdated = NOW();
+(1, 'SuperAdmin', 3, datetime('now'), datetime('now')),
+(2, 'Admin', 2, datetime('now'), datetime('now')),
+(3, 'Driver', 1, datetime('now'), datetime('now'));
 
--- Create trigger to automatically create driver when user with Driver role is created
-DELIMITER //
+-- Create default SuperAdmin user
+-- Password is 'admin123' - CHANGE THIS IN PRODUCTION!
+INSERT OR REPLACE INTO Users (
+    UserId, UserRoleId, UserFirstName, UserLastName, UserEmail, 
+    UserCompanyId, UserPasswordHash, UserCreated, UserUpdated
+) VALUES (
+    1, 
+    1, -- SuperAdmin role
+    'Super', 
+    'Admin', 
+    'admin@ocpp.com',  -- Changed from .local to .com
+    NULL, -- SuperAdmin has no company restriction
+    '$2a$12$jQP2wFrL9egiUDXNXT7c9eXJx4kYcu2RZ3z2VTqw0xw932OlrRhcK', -- bcrypt hash of 'admin123'
+    datetime('now'),
+    datetime('now')
+);
 
-CREATE TRIGGER after_user_insert_create_driver
-AFTER INSERT ON Users
-FOR EACH ROW
-BEGIN
-    DECLARE driver_role_id INT;
-    DECLARE next_driver_id INT;
-    
-    -- Get the Driver role ID
-    SELECT UserRoleId INTO driver_role_id 
-    FROM UserRoles 
-    WHERE UserRoleName = 'Driver';
-    
-    -- Only proceed if the new user has Driver role
-    IF NEW.UserRoleId = driver_role_id THEN
-        -- Get the next driver ID (max + 1)
-        SELECT COALESCE(MAX(DriverId), 0) + 1 INTO next_driver_id 
-        FROM Drivers;
-        
-        -- Create the driver record with minimal fields only
-        INSERT INTO Drivers (
-            DriverId,
-            DriverEnabled,
-            DriverFullName,
-            DriverPhone,
-            DriverCreated,
-            DriverUpdated
-        ) VALUES (
-            next_driver_id, -- Auto-incremented driver ID
-            FALSE, -- Disabled by default
-            CONCAT(COALESCE(NEW.UserFirstName, ''), ' ', COALESCE(NEW.UserLastName, '')),
-            NEW.UserPhone,
-            NOW(),
-            NOW()
-        );
-    END IF;
-END//
+-- Create example company for testing
+INSERT OR IGNORE INTO Companies (
+    CompanyId, CompanyName, CompanyEnabled, CompanyCreated, CompanyUpdated
+) VALUES (
+    1, 'Test EV Company', 1, datetime('now'), datetime('now')
+);
 
-DELIMITER ;
+-- Create example tariff for the company
+INSERT OR IGNORE INTO Tariffs (
+    TariffsId, TariffsCompanyId, TariffsEnabled, TariffsName, TariffsType, TariffsPer,
+    TariffsRateDaytime, TariffsRateNighttime, TariffsDaytimeFrom, TariffsDaytimeTo,
+    TariffsNighttimeFrom, TariffsNighttimeTo, TariffsFixedStartFee,
+    TariffsCreated, TariffsUpdated
+) VALUES (
+    1, 1, 1, 'Standard Pricing', 'Time-of-Use', 'kWh',
+    0.25, 0.15, '08:00:00', '18:00:00',
+    '18:00:00', '08:00:00', 1.00,
+    datetime('now'), datetime('now')
+);
+
+-- Create example driver group
+INSERT OR IGNORE INTO DriversGroup (
+    DriversGroupId, DriversGroupCompanyId, DriversGroupName, DriversGroupEnabled,
+    DriverTariffId, DriversGroupCreated, DriversGroupUpdated
+) VALUES (
+    1, 1, 'Standard Drivers', 1, 1, datetime('now'), datetime('now')
+);
+
+-- Create example payment method
+INSERT OR IGNORE INTO PaymentMethods (
+    PaymentMethodId, PaymentMethodCompanyId, PaymentMethodName, PaymentMethodEnabled,
+    PaymentMethodCreated, PaymentMethodUpdated
+) VALUES (
+    1, 1, 'Credit Card', 1, datetime('now'), datetime('now')
+);
+
+-- Create test admin user for the company
+-- Password is 'admin123' - CHANGE THIS IN PRODUCTION!
+INSERT OR IGNORE INTO Users (
+    UserId, UserRoleId, UserFirstName, UserLastName, UserEmail, 
+    UserCompanyId, UserPasswordHash, UserCreated, UserUpdated
+) VALUES (
+    2, 
+    2, -- Admin role
+    'Company', 
+    'Admin', 
+    'admin@testcompany.com',
+    1, -- Test Company
+    '$2b$12$LQv3c1yqBw1XIXVe8gOw9e7iGjB7qhJ.CjvFnQhcnVLLcQQf4wQ6S', -- bcrypt hash of 'admin123'
+    datetime('now'),
+    datetime('now')
+);
+
+-- Create test driver user
+-- Password is 'driver123' - CHANGE THIS IN PRODUCTION!
+INSERT OR IGNORE INTO Users (
+    UserId, UserRoleId, UserFirstName, UserLastName, UserEmail, 
+    UserCompanyId, UserPasswordHash, UserCreated, UserUpdated
+) VALUES (
+    3, 
+    3, -- Driver role
+    'Test', 
+    'Driver', 
+    'driver@testcompany.com',
+    1, -- Test Company
+    '$2b$12$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', -- bcrypt hash of 'driver123'
+    datetime('now'),
+    datetime('now')
+);
+
+-- Create corresponding driver record for the driver user
+INSERT OR IGNORE INTO Drivers (
+    DriverId, DriverCompanyId, DriverEnabled, DriverFullName, DriverEmail, 
+    DriverGroupId, DriverUserId, DriverNotifActions, DriverNotifPayments, 
+    DriverNotifSystem, DriverCreated, DriverUpdated
+) VALUES (
+    1, 1, 1, 'Test Driver', 'driver@testcompany.com',
+    1, 3, 0, 0, 0, datetime('now'), datetime('now')
+);
+
+-- Create example site
+INSERT OR IGNORE INTO Sites (
+    SiteId, SiteCompanyID, SiteEnabled, SiteName, SiteAddress, SiteCity, 
+    SiteRegion, SiteCountry, SiteCreated, SiteUpdated
+) VALUES (
+    1, 1, 1, 'Main Office', '123 EV Street', 'Electric City',
+    'CA', 'USA', datetime('now'), datetime('now')
+);
+
+-- Create example charger
+INSERT OR IGNORE INTO Chargers (
+    ChargerId, ChargerCompanyId, ChargerSiteId, ChargerName, ChargerEnabled,
+    ChargerBrand, ChargerModel, ChargerType, ChargerIsOnline, ChargerActive24x7,
+    ChargerCreated, ChargerUpdated
+) VALUES (
+    1, 1, 1, 'CHARGER-001', 1,
+    'TestBrand', 'Model-X', 'AC', 0, 1,
+    datetime('now'), datetime('now')
+);
+
+-- Create example connector
+INSERT OR IGNORE INTO Connectors (
+    ConnectorId, ConnectorCompanyId, ConnectorSiteId, ConnectorChargerId,
+    ConnectorType, ConnectorEnabled, ConnectorStatus, ConnectorMaxVolt, ConnectorMaxAmp,
+    ConnectorCreated, ConnectorUpdated
+) VALUES (
+    1, 1, 1, 1,
+    'Type2', 1, 'Available', 240.0, 32.0,
+    datetime('now'), datetime('now')
+);
+
+-- Create example RFID card for the driver
+INSERT OR IGNORE INTO RFIDCards (
+    RFIDCardId, RFIDCardCompanyId, RFIDCardDriverId, RFIDCardEnabled,
+    RFIDCardNameOn, RFIDCardCreated, RFIDCardUpdated
+) VALUES (
+    'RFID123456789', 1, 1, 1,
+    'Test Driver Card', datetime('now'), datetime('now')
+);
 
 -- Additional Indexes for Performance
 -- These indexes will improve query performance for common operations
+
+-- Authentication indexes
+CREATE INDEX IF NOT EXISTS idx_users_email ON Users(UserEmail);
+CREATE INDEX IF NOT EXISTS idx_users_company ON Users(UserCompanyId);
+CREATE INDEX IF NOT EXISTS idx_users_role ON Users(UserRoleId);
+CREATE INDEX IF NOT EXISTS idx_drivers_user ON Drivers(DriverUserId);
 
 -- Index for company-based queries
 CREATE INDEX IF NOT EXISTS idx_sites_company ON Sites(SiteCompanyID);
@@ -505,7 +604,16 @@ CREATE INDEX IF NOT EXISTS idx_events_company_site_charger ON EventsData(EventsD
 -- 14. RFID card IDs are globally unique
 -- 15. Stripe payment intent IDs are globally unique
 
--- Auto Driver Creation:
--- When a user with 'Driver' role is created, a corresponding driver record is automatically
--- created with minimal fields (DriverId, DriverEnabled=FALSE, DriverFullName, DriverPhone, 
--- DriverCreated, DriverUpdated). All other driver fields remain NULL and can be updated later.
+-- Authentication Features:
+-- - Role-based access control with SuperAdmin, Admin, Driver roles
+-- - User-to-driver linking for driver authentication
+-- - Password hashing support with bcrypt
+-- - Company-based user isolation
+-- - Default test users with hashed passwords
+
+-- Default Users Created:
+-- 1. SuperAdmin: admin@ocpp.com / admin123
+-- 2. Company Admin: admin@testcompany.com / admin123
+-- 3. Driver: driver@testcompany.com / driver123
+
+-- SECURITY WARNING: Change all default passwords in production!

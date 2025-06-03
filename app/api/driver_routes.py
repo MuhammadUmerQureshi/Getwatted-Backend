@@ -5,7 +5,15 @@ from datetime import datetime
 import logging
 
 from app.models.driver import Driver, DriverCreate, DriverUpdate
+from app.models.auth import UserInToken
 from app.db.database import execute_query, execute_insert, execute_update, execute_delete
+from app.dependencies.auth import (
+    require_role,
+    get_current_user,
+    require_company_access,
+    require_admin_or_higher,
+    check_company_access
+)
 
 router = APIRouter(prefix="/api/v1/drivers", tags=["DRIVERS"])
 company_router = APIRouter(prefix="/api/v1/companies", tags=["COMPANIES"])
@@ -16,15 +24,24 @@ logger = logging.getLogger("ocpp.drivers")
 async def get_drivers(
     company_id: Optional[int] = Query(None, description="Filter by company ID"),
     group_id: Optional[int] = Query(None, description="Filter by driver group ID"),
-    enabled: Optional[bool] = Query(None, description="Filter by enabled status")
+    enabled: Optional[bool] = Query(None, description="Filter by enabled status"),
+    user: UserInToken = Depends(require_admin_or_higher)
 ):
-    """Get a list of all drivers with optional filtering."""
+    """
+    Get a list of all drivers with optional filtering.
+    
+    - SuperAdmin: Can see all drivers
+    - Admin: Can only see drivers from their company
+    - Driver: Not allowed to access this endpoint
+    """
     try:
         query = "SELECT * FROM Drivers"
         params = []
-        
-        # Build WHERE clause for filters
         filters = []
+        
+        # Apply company filter based on role
+        if user.role.value != "SuperAdmin":
+            company_id = user.company_id
         
         if company_id is not None:
             filters.append("DriverCompanyId = ?")
@@ -69,64 +86,67 @@ async def get_driver(driver_id: int):
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @router.post("/", response_model=Driver, status_code=201)
-async def create_driver(driver: DriverCreate):
-    """Create a new driver."""
+async def create_driver(
+    driver: DriverCreate,
+    user: UserInToken = Depends(require_admin_or_higher)
+):
+    """
+    Create a new driver.
+    
+    - SuperAdmin: Can create drivers for any company
+    - Admin: Can only create drivers for their company
+    - Driver: Not allowed to access this endpoint
+    """
     try:
+        # Validate company access
+        if user.role.value != "SuperAdmin":
+            if driver.company_id != user.company_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You can only create drivers for your own company"
+                )
+        
         # Check if company exists
         company = execute_query(
-            "SELECT 1 FROM Companies WHERE CompanyId = ?", 
-            (driver.DriverCompanyId,)
+            "SELECT 1 FROM Companies WHERE CompanyId = ?",
+            (driver.company_id,)
         )
-        
         if not company:
-            raise HTTPException(status_code=404, detail=f"Company with ID {driver.DriverCompanyId} not found")
-            
-        # Check if driver group exists if provided
-        if driver.DriverGroupId:
-            driver_group = execute_query(
-                "SELECT 1 FROM DriversGroup WHERE DriversGroupId = ?", 
-                (driver.DriverGroupId,)
+            raise HTTPException(
+                status_code=404,
+                detail=f"Company with ID {driver.company_id} not found"
             )
-            
-            if not driver_group:
-                raise HTTPException(status_code=404, detail=f"Driver group with ID {driver.DriverGroupId} not found")
         
-        # Get maximum driver ID and increment by 1
-        max_id_result = execute_query("SELECT MAX(DriverId) as max_id FROM Drivers")
+        # Get next driver ID
+        max_id = execute_query("SELECT MAX(DriverId) as max_id FROM Drivers")
         new_id = 1
-        if max_id_result and max_id_result[0]['max_id'] is not None:
-            new_id = max_id_result[0]['max_id'] + 1
+        if max_id and max_id[0]['max_id'] is not None:
+            new_id = max_id[0]['max_id'] + 1
             
+        # Insert driver
         now = datetime.now().isoformat()
-        
-        # Insert new driver
         execute_insert(
             """
             INSERT INTO Drivers (
-                DriverId, DriverCompanyId, DriverEnabled, DriverFullName,
-                DriverEmail, DriverPhone, DriverGroupId, DriverNotifActions,
-                DriverNotifPayments, DriverNotifSystem,
-                DriverCreated, DriverUpdated
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                DriverId, DriverCompanyId, DriverGroupId, DriverFullName,
+                DriverEmail, DriverPhone, DriverEnabled, DriverCreated, DriverUpdated
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                new_id,
-                driver.DriverCompanyId,
-                1 if driver.DriverEnabled else 0,
-                driver.DriverFullName,
-                driver.DriverEmail,
-                driver.DriverPhone,
-                driver.DriverGroupId,
-                1 if driver.DriverNotifActions else 0,
-                1 if driver.DriverNotifPayments else 0,
-                1 if driver.DriverNotifSystem else 0,
-                now,
-                now
+                new_id, driver.company_id, driver.group_id, driver.full_name,
+                driver.email, driver.phone, 1, now, now
             )
         )
         
-        # Return the created driver
-        return await get_driver(new_id)
+        # Return created driver
+        created_driver = execute_query(
+            "SELECT * FROM Drivers WHERE DriverId = ?",
+            (new_id,)
+        )
+        
+        logger.info(f"✅ Driver created: {driver.full_name} by {user.email}")
+        return created_driver[0]
+        
     except HTTPException:
         raise
     except Exception as e:
@@ -134,111 +154,170 @@ async def create_driver(driver: DriverCreate):
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @router.put("/{driver_id}", response_model=Driver)
-async def update_driver(driver_id: int, driver: DriverUpdate):
-    """Update an existing driver."""
+async def update_driver(
+    driver_id: int,
+    driver_update: DriverUpdate,
+    user: UserInToken = Depends(require_admin_or_higher)
+):
+    """
+    Update a driver.
+    
+    - SuperAdmin: Can update any driver
+    - Admin: Can only update drivers from their company
+    - Driver: Not allowed to access this endpoint
+    """
     try:
-        # Check if driver exists
-        existing = execute_query("SELECT 1 FROM Drivers WHERE DriverId = ?", (driver_id,))
-        if not existing:
-            raise HTTPException(status_code=404, detail=f"Driver with ID {driver_id} not found")
+        # Get current driver
+        current_driver = execute_query(
+            "SELECT * FROM Drivers WHERE DriverId = ?",
+            (driver_id,)
+        )
         
-        # Check if driver group exists if provided
-        if driver.DriverGroupId:
-            driver_group = execute_query(
-                "SELECT 1 FROM DriversGroup WHERE DriversGroupId = ?", 
-                (driver.DriverGroupId,)
+        if not current_driver:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Driver with ID {driver_id} not found"
             )
             
-            if not driver_group:
-                raise HTTPException(status_code=404, detail=f"Driver group with ID {driver.DriverGroupId} not found")
-        
-        # Build update query dynamically based on provided fields
-        update_fields = []
-        params = []
-        
-        for field, value in driver.model_dump(exclude_unset=True).items():
-            if value is not None:
-                # Convert boolean to integer for SQLite
-                if isinstance(value, bool):
-                    value = 1 if value else 0
-                update_fields.append(f"{field} = ?")
-                params.append(value)
-                
-        if not update_fields:
-            # No fields to update
-            return await get_driver(driver_id)
+        # Check company access
+        if user.role.value != "SuperAdmin":
+            if current_driver[0]["DriverCompanyId"] != user.company_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You can only update drivers from your company"
+                )
             
-        # Add DriverUpdated field
-        update_fields.append("DriverUpdated = ?")
-        params.append(datetime.now().isoformat())
+            # Prevent changing company for non-superadmins
+            if driver_update.company_id and driver_update.company_id != user.company_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You cannot change a driver's company"
+                )
         
-        # Add driver_id to params
-        params.append(driver_id)
-        
-        # Execute update
+        # Update driver
+        now = datetime.now().isoformat()
         execute_update(
-            f"UPDATE Drivers SET {', '.join(update_fields)} WHERE DriverId = ?",
-            tuple(params)
+            """
+            UPDATE Drivers SET
+                DriverCompanyId = ?,
+                DriverGroupId = ?,
+                DriverFullName = ?,
+                DriverEmail = ?,
+                DriverPhone = ?,
+                DriverEnabled = ?,
+                DriverUpdated = ?
+            WHERE DriverId = ?
+            """,
+            (
+                driver_update.company_id or current_driver[0]["DriverCompanyId"],
+                driver_update.group_id or current_driver[0]["DriverGroupId"],
+                driver_update.full_name or current_driver[0]["DriverFullName"],
+                driver_update.email or current_driver[0]["DriverEmail"],
+                driver_update.phone or current_driver[0]["DriverPhone"],
+                driver_update.enabled if driver_update.enabled is not None else current_driver[0]["DriverEnabled"],
+                now,
+                driver_id
+            )
         )
         
         # Return updated driver
-        return await get_driver(driver_id)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error updating driver {driver_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-
-@router.delete("/{driver_id}", status_code=204)
-async def delete_driver(driver_id: int):
-    """Delete a driver."""
-    try:
-        # Check if driver exists
-        existing = execute_query("SELECT 1 FROM Drivers WHERE DriverId = ?", (driver_id,))
-        if not existing:
-            raise HTTPException(status_code=404, detail=f"Driver with ID {driver_id} not found")
-            
-        # Delete driver
-        rows_deleted = execute_delete("DELETE FROM Drivers WHERE DriverId = ?", (driver_id,))
+        updated_driver = execute_query(
+            "SELECT * FROM Drivers WHERE DriverId = ?",
+            (driver_id,)
+        )
         
-        if rows_deleted == 0:
-            raise HTTPException(status_code=500, detail=f"Failed to delete driver {driver_id}")
+        logger.info(f"✅ Driver updated: {driver_id} by {user.email}")
+        return updated_driver[0]
+        
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting driver {driver_id}: {str(e)}")
+        logger.error(f"Error updating driver: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
+@router.delete("/{driver_id}")
+async def delete_driver(
+    driver_id: int,
+    user: UserInToken = Depends(require_admin_or_higher)
+):
+    """
+    Delete a driver.
+    
+    - SuperAdmin: Can delete any driver
+    - Admin: Can only delete drivers from their company
+    - Driver: Not allowed to access this endpoint
+    """
+    try:
+        # Get current driver
+        current_driver = execute_query(
+            "SELECT * FROM Drivers WHERE DriverId = ?",
+            (driver_id,)
+        )
+        
+        if not current_driver:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Driver with ID {driver_id} not found"
+            )
+            
+        # Check company access
+        if user.role.value != "SuperAdmin":
+            if current_driver[0]["DriverCompanyId"] != user.company_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You can only delete drivers from your company"
+                )
+        
+        # Delete driver
+        execute_delete(
+            "DELETE FROM Drivers WHERE DriverId = ?",
+            (driver_id,)
+        )
+        
+        logger.info(f"✅ Driver deleted: {driver_id} by {user.email}")
+        return {"message": f"Driver {driver_id} deleted successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting driver: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+# Company-specific driver endpoints
 @company_router.get("/{company_id}/drivers", response_model=List[Driver])
 async def get_company_drivers(
     company_id: int,
+    group_id: Optional[int] = Query(None, description="Filter by driver group ID"),
     enabled: Optional[bool] = Query(None, description="Filter by enabled status"),
-    group_id: Optional[int] = Query(None, description="Filter by driver group ID")
+    user: UserInToken = Depends(require_admin_or_higher)
 ):
-    """Get all drivers for a specific company."""
+    """
+    Get all drivers for a specific company.
+    
+    - SuperAdmin: Can see drivers from any company
+    - Admin: Can only see drivers from their company
+    - Driver: Not allowed to access this endpoint
+    """
     try:
-        # Check if company exists
-        company = execute_query("SELECT 1 FROM Companies WHERE CompanyId = ?", (company_id,))
-        if not company:
-            raise HTTPException(status_code=404, detail=f"Company with ID {company_id} not found")
-            
+        # Check company access
+        check_company_access(user, company_id)
+
         query = "SELECT * FROM Drivers WHERE DriverCompanyId = ?"
         params = [company_id]
+        
+        if group_id is not None:
+            query += " AND DriverGroupId = ?"
+            params.append(group_id)
         
         if enabled is not None:
             query += " AND DriverEnabled = ?"
             params.append(1 if enabled else 0)
             
-        if group_id is not None:
-            query += " AND DriverGroupId = ?"
-            params.append(group_id)
-            
         query += " ORDER BY DriverFullName"
         
         drivers = execute_query(query, tuple(params))
         return drivers
-    except HTTPException:
-        raise
+        
     except Exception as e:
         logger.error(f"Error getting drivers for company {company_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")

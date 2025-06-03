@@ -22,6 +22,7 @@ class PaymentSettings(BaseSettings):
     class Config:
         env_file = ".env"
         env_prefix = "PAYMENT_"
+        extra = "ignore"
 
 # Global payment settings instance
 payment_settings = PaymentSettings()
