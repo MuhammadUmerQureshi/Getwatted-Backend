@@ -14,6 +14,7 @@ class SiteGroupUpdate(BaseModel):
     """Schema for updating a site group."""
     SiteGroupName: Optional[str] = None
     SiteGroupEnabled: Optional[bool] = None
+    SiteCompanyId: Optional[int] = None
 
 
 class SiteGroup(BaseModel):

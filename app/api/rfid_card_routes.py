@@ -126,7 +126,7 @@ async def create_rfid_card(
     try:
         # Validate company access
         if user.role.value != "SuperAdmin":
-            if rfid_card.company_id != user.company_id:
+            if rfid_card.RFIDCardCompanyId != user.company_id:
                 raise HTTPException(
                     status_code=403,
                     detail="You can only create RFID cards for your own company"
@@ -135,34 +135,34 @@ async def create_rfid_card(
         # Check if company exists
         company = execute_query(
             "SELECT 1 FROM Companies WHERE CompanyId = ?",
-            (rfid_card.company_id,)
+            (rfid_card.RFIDCardCompanyId,)
         )
         if not company:
             raise HTTPException(
                 status_code=404,
-                detail=f"Company with ID {rfid_card.company_id} not found"
+                detail=f"Company with ID {rfid_card.RFIDCardCompanyId} not found"
             )
             
         # Check if driver exists and belongs to company
         driver = execute_query(
             "SELECT 1 FROM Drivers WHERE DriverId = ? AND DriverCompanyId = ?",
-            (rfid_card.driver_id, rfid_card.company_id)
+            (rfid_card.RFIDCardDriverId, rfid_card.RFIDCardCompanyId)
         )
         if not driver:
             raise HTTPException(
                 status_code=404,
-                detail=f"Driver with ID {rfid_card.driver_id} not found or does not belong to company {rfid_card.company_id}"
+                detail=f"Driver with ID {rfid_card.RFIDCardDriverId} not found or does not belong to company {rfid_card.RFIDCardCompanyId}"
             )
             
         # Check if RFID card already exists
         existing_rfid_card = execute_query(
             "SELECT 1 FROM RFIDCards WHERE RFIDCardId = ?",
-            (rfid_card.rfid_card_id,)
+            (rfid_card.RFIDCardId,)
         )
         if existing_rfid_card:
             raise HTTPException(
                 status_code=409,
-                detail=f"RFID card with ID {rfid_card.rfid_card_id} already exists"
+                detail=f"RFID card with ID {rfid_card.RFIDCardId} already exists"
             )
             
         # Insert RFID card
@@ -171,17 +171,18 @@ async def create_rfid_card(
             """
             INSERT INTO RFIDCards (
                 RFIDCardId, RFIDCardCompanyId, RFIDCardDriverId,
-                RFIDCardNumber, RFIDCardEnabled, RFIDCardExpiration,
+                RFIDCardNameOn, RFIDCardNumberOn, RFIDCardEnabled, RFIDCardExpiration,
                 RFIDCardCreated, RFIDCardUpdated
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                rfid_card.rfid_card_id,
-                rfid_card.company_id,
-                rfid_card.driver_id,
-                rfid_card.card_number,
-                1 if rfid_card.enabled else 0,
-                rfid_card.expiration.isoformat() if rfid_card.expiration else None,
+                rfid_card.RFIDCardId,
+                rfid_card.RFIDCardCompanyId,
+                rfid_card.RFIDCardDriverId,
+                rfid_card.RFIDCardNameOn,
+                rfid_card.RFIDCardNumberOn,
+                1 if rfid_card.RFIDCardEnabled else 0,
+                rfid_card.RFIDCardExpiration.isoformat() if rfid_card.RFIDCardExpiration else None,
                 now,
                 now
             )
@@ -190,10 +191,10 @@ async def create_rfid_card(
         # Return created RFID card
         created_rfid_card = execute_query(
             "SELECT * FROM RFIDCards WHERE RFIDCardId = ?",
-            (rfid_card.rfid_card_id,)
+            (rfid_card.RFIDCardId,)
         )
         
-        logger.info(f"✅ RFID card created: {rfid_card.card_number} by {user.email}")
+        logger.info(f"✅ RFID card created: {rfid_card.RFIDCardNumberOn} by {user.email}")
         return created_rfid_card[0]
         
     except HTTPException:

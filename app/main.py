@@ -63,9 +63,9 @@ async def lifespan(app: FastAPI):
         raise
 
 app = FastAPI(
-    title="OCPP Central System Server with Authentication", 
-    description="OCPP server with company, site, charger management, payment processing, and role-based authentication",
-    version="1.1.0",
+    title="OCPP Backend Server with Authentication", 
+    description="",
+    version="1.0",
     lifespan=lifespan
 )
 

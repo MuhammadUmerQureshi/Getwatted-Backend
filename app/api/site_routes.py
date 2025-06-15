@@ -46,7 +46,7 @@ async def get_sites(
             
         if enabled is not None:
             filters.append("SiteEnabled = ?")
-            params.append(1 if enabled else 0)
+            params.append(enabled)  # Using boolean directly since SQLite handles it
             
         if filters:
             query += f" WHERE {' AND '.join(filters)}"
@@ -93,7 +93,7 @@ async def create_site(
     try:
         # Validate company access
         if user.role.value != "SuperAdmin":
-            if site.company_id != user.company_id:
+            if site.SiteCompanyID != user.company_id:
                 raise HTTPException(
                     status_code=403,
                     detail="You can only create sites for your own company"
@@ -102,12 +102,12 @@ async def create_site(
         # Check if company exists
         company = execute_query(
             "SELECT 1 FROM Companies WHERE CompanyId = ?",
-            (site.company_id,)
+            (site.SiteCompanyID,)
         )
         if not company:
             raise HTTPException(
                 status_code=404,
-                detail=f"Company with ID {site.company_id} not found"
+                detail=f"Company with ID {site.SiteCompanyID} not found"
             )
         
         # Get next site ID
@@ -122,16 +122,18 @@ async def create_site(
             """
             INSERT INTO Sites (
                 SiteId, SiteCompanyID, SiteName, SiteAddress,
-                SiteCity, SiteState, SiteCountry, SiteZipCode,
-                SiteLatitude, SiteLongitude, SiteEnabled,
+                SiteCity, SiteRegion, SiteCountry, SiteZipCode,
+                SiteGeoCoord, SiteEnabled, SiteGroupId,
+                SiteTaxRate, SiteContactName, SiteContactPh, SiteContactEmail,
                 SiteCreated, SiteUpdated
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                new_id, site.company_id, site.name, site.address,
-                site.city, site.state, site.country, site.zip_code,
-                site.latitude, site.longitude, 1,
-                now, now
+                new_id, site.SiteCompanyID, site.SiteName, site.SiteAddress,
+                site.SiteCity, site.SiteRegion, site.SiteCountry, site.SiteZipCode,
+                site.SiteGeoCoord, site.SiteEnabled, site.SiteGroupId,
+                site.SiteTaxRate, site.SiteContactName, site.SiteContactPh, site.SiteContactEmail,
+                now, now  # Using the same timestamp for both created and updated
             )
         )
         
@@ -141,7 +143,7 @@ async def create_site(
             (new_id,)
         )
         
-        logger.info(f"✅ Site created: {site.name} by {user.email}")
+        logger.info(f"✅ Site created: {site.SiteName} by {user.email}")
         return created_site[0]
         
     except HTTPException:
@@ -183,43 +185,42 @@ async def update_site(
                     status_code=403,
                     detail="You can only update sites from your company"
                 )
-            
-            # Prevent changing company for non-superadmins
-            if site_update.company_id and site_update.company_id != user.company_id:
-                raise HTTPException(
-                    status_code=403,
-                    detail="You cannot change a site's company"
-                )
         
         # Update site
         now = datetime.now().isoformat()
         execute_update(
             """
             UPDATE Sites SET
-                SiteCompanyID = ?,
                 SiteName = ?,
                 SiteAddress = ?,
                 SiteCity = ?,
-                SiteState = ?,
+                SiteRegion = ?,
                 SiteCountry = ?,
                 SiteZipCode = ?,
-                SiteLatitude = ?,
-                SiteLongitude = ?,
+                SiteGeoCoord = ?,
                 SiteEnabled = ?,
+                SiteGroupId = ?,
+                SiteTaxRate = ?,
+                SiteContactName = ?,
+                SiteContactPh = ?,
+                SiteContactEmail = ?,
                 SiteUpdated = ?
             WHERE SiteId = ?
             """,
             (
-                site_update.company_id or current_site[0]["SiteCompanyID"],
-                site_update.name or current_site[0]["SiteName"],
-                site_update.address or current_site[0]["SiteAddress"],
-                site_update.city or current_site[0]["SiteCity"],
-                site_update.state or current_site[0]["SiteState"],
-                site_update.country or current_site[0]["SiteCountry"],
-                site_update.zip_code or current_site[0]["SiteZipCode"],
-                site_update.latitude or current_site[0]["SiteLatitude"],
-                site_update.longitude or current_site[0]["SiteLongitude"],
-                site_update.enabled if site_update.enabled is not None else current_site[0]["SiteEnabled"],
+                site_update.SiteName or current_site[0]["SiteName"],
+                site_update.SiteAddress or current_site[0]["SiteAddress"],
+                site_update.SiteCity or current_site[0]["SiteCity"],
+                site_update.SiteRegion or current_site[0]["SiteRegion"],
+                site_update.SiteCountry or current_site[0]["SiteCountry"],
+                site_update.SiteZipCode or current_site[0]["SiteZipCode"],
+                site_update.SiteGeoCoord or current_site[0]["SiteGeoCoord"],
+                site_update.SiteEnabled if site_update.SiteEnabled is not None else current_site[0]["SiteEnabled"],
+                site_update.SiteGroupId or current_site[0]["SiteGroupId"],
+                site_update.SiteTaxRate or current_site[0]["SiteTaxRate"],
+                site_update.SiteContactName or current_site[0]["SiteContactName"],
+                site_update.SiteContactPh or current_site[0]["SiteContactPh"],
+                site_update.SiteContactEmail or current_site[0]["SiteContactEmail"],
                 now,
                 site_id
             )
@@ -311,7 +312,7 @@ async def get_company_sites(
         
         if enabled is not None:
             query += " AND SiteEnabled = ?"
-            params.append(1 if enabled else 0)
+            params.append(enabled)  # Using boolean directly since SQLite handles it
             
         query += " ORDER BY SiteName"
         

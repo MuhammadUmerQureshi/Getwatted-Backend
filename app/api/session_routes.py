@@ -119,6 +119,7 @@ async def get_session(
 ):
     """
     Get a specific charging session by ID.
+    Returns an empty JSON object if session is not found.
     
     - SuperAdmin: Can see any session
     - Admin: Can only see sessions from their company
@@ -127,15 +128,12 @@ async def get_session(
     try:
         # Get session
         session = execute_query(
-            "SELECT * FROM ChargeSessions WHERE ChargerSessionId = ?",
+            "SELECT * FROM ChargeSessions WHERE ChargeSessionId = ?",
             (session_id,)
         )
         
         if not session:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Session with ID {session_id} not found"
-            )
+            return {}  # Return empty JSON object instead of raising 404
             
         # Check access permissions
         if user.role.value == "Driver":
@@ -159,7 +157,7 @@ async def get_session(
         logger.error(f"Error getting session {session_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
-@router.get("/{session_id}/meter-timeline")
+@router.get("/{session_id}/meter_values")
 async def get_session_meter_values(
     session_id: int,
     user: UserInToken = Depends(get_current_user)
@@ -174,7 +172,7 @@ async def get_session_meter_values(
     try:
         # Get session first to check permissions
         session = execute_query(
-            "SELECT * FROM ChargeSessions WHERE ChargerSessionId = ?",
+            "SELECT * FROM ChargeSessions WHERE ChargeSessionId = ?",
             (session_id,)
         )
         
@@ -223,7 +221,7 @@ async def get_session_energy(
     try:
         # Get session first to check permissions
         session = execute_query(
-            "SELECT * FROM ChargeSessions WHERE ChargerSessionId = ?",
+            "SELECT * FROM ChargeSessions WHERE ChargeSessionId = ?",
             (session_id,)
         )
         
@@ -272,7 +270,7 @@ async def get_session_max_power(
     try:
         # Get session first to check permissions
         session = execute_query(
-            "SELECT * FROM ChargeSessions WHERE ChargerSessionId = ?",
+            "SELECT * FROM ChargeSessions WHERE ChargeSessionId = ?",
             (session_id,)
         )
         

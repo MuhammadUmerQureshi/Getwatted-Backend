@@ -100,7 +100,7 @@ async def create_driver(
     try:
         # Validate company access
         if user.role.value != "SuperAdmin":
-            if driver.company_id != user.company_id:
+            if driver.DriverCompanyId != user.company_id:
                 raise HTTPException(
                     status_code=403,
                     detail="You can only create drivers for your own company"
@@ -109,12 +109,12 @@ async def create_driver(
         # Check if company exists
         company = execute_query(
             "SELECT 1 FROM Companies WHERE CompanyId = ?",
-            (driver.company_id,)
+            (driver.DriverCompanyId,)
         )
         if not company:
             raise HTTPException(
                 status_code=404,
-                detail=f"Company with ID {driver.company_id} not found"
+                detail=f"Company with ID {driver.DriverCompanyId} not found"
             )
         
         # Get next driver ID
@@ -129,12 +129,14 @@ async def create_driver(
             """
             INSERT INTO Drivers (
                 DriverId, DriverCompanyId, DriverGroupId, DriverFullName,
-                DriverEmail, DriverPhone, DriverEnabled, DriverCreated, DriverUpdated
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                DriverEmail, DriverPhone, DriverEnabled, DriverCreated, DriverUpdated,
+                DriverNotifActions, DriverNotifPayments, DriverNotifSystem
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                new_id, driver.company_id, driver.group_id, driver.full_name,
-                driver.email, driver.phone, 1, now, now
+                new_id, driver.DriverCompanyId, driver.DriverGroupId, driver.DriverFullName,
+                driver.DriverEmail, driver.DriverPhone, 1 if driver.DriverEnabled else 0, now, now,
+                driver.DriverNotifActions, driver.DriverNotifPayments, driver.DriverNotifSystem
             )
         )
         
@@ -144,7 +146,7 @@ async def create_driver(
             (new_id,)
         )
         
-        logger.info(f"✅ Driver created: {driver.full_name} by {user.email}")
+        logger.info(f"✅ Driver created: {driver.DriverFullName} by {user.email}")
         return created_driver[0]
         
     except HTTPException:
@@ -186,35 +188,32 @@ async def update_driver(
                     status_code=403,
                     detail="You can only update drivers from your company"
                 )
-            
-            # Prevent changing company for non-superadmins
-            if driver_update.company_id and driver_update.company_id != user.company_id:
-                raise HTTPException(
-                    status_code=403,
-                    detail="You cannot change a driver's company"
-                )
         
         # Update driver
         now = datetime.now().isoformat()
         execute_update(
             """
             UPDATE Drivers SET
-                DriverCompanyId = ?,
                 DriverGroupId = ?,
                 DriverFullName = ?,
                 DriverEmail = ?,
                 DriverPhone = ?,
                 DriverEnabled = ?,
+                DriverNotifActions = ?,
+                DriverNotifPayments = ?,
+                DriverNotifSystem = ?,
                 DriverUpdated = ?
             WHERE DriverId = ?
             """,
             (
-                driver_update.company_id or current_driver[0]["DriverCompanyId"],
-                driver_update.group_id or current_driver[0]["DriverGroupId"],
-                driver_update.full_name or current_driver[0]["DriverFullName"],
-                driver_update.email or current_driver[0]["DriverEmail"],
-                driver_update.phone or current_driver[0]["DriverPhone"],
-                driver_update.enabled if driver_update.enabled is not None else current_driver[0]["DriverEnabled"],
+                driver_update.DriverGroupId or current_driver[0]["DriverGroupId"],
+                driver_update.DriverFullName or current_driver[0]["DriverFullName"],
+                driver_update.DriverEmail or current_driver[0]["DriverEmail"],
+                driver_update.DriverPhone or current_driver[0]["DriverPhone"],
+                driver_update.DriverEnabled if driver_update.DriverEnabled is not None else current_driver[0]["DriverEnabled"],
+                driver_update.DriverNotifActions if driver_update.DriverNotifActions is not None else current_driver[0]["DriverNotifActions"],
+                driver_update.DriverNotifPayments if driver_update.DriverNotifPayments is not None else current_driver[0]["DriverNotifPayments"],
+                driver_update.DriverNotifSystem if driver_update.DriverNotifSystem is not None else current_driver[0]["DriverNotifSystem"],
                 now,
                 driver_id
             )

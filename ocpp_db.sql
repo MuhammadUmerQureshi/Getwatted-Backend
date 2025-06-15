@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS Discounts (
 
 -- DriversGroup Table
 CREATE TABLE IF NOT EXISTS DriversGroup (
-    DriversGroupId INT PRIMARY KEY,
+    DriversGroupId INTEGER PRIMARY KEY AUTOINCREMENT,
     DriversGroupCompanyId INT,
     DriversGroupName VARCHAR(255) NOT NULL,
     DriversGroupEnabled BOOLEAN,
@@ -391,137 +391,15 @@ INSERT OR REPLACE INTO Users (
 ) VALUES (
     1, 
     1, -- SuperAdmin role
-    'Super', 
-    'Admin', 
-    'admin@ocpp.com',  -- Changed from .local to .com
+    'Ed', 
+    'Magrassi', 
+    'ed@decolight.com',  -- Changed from .local to .com
     NULL, -- SuperAdmin has no company restriction
-    '$2a$12$jQP2wFrL9egiUDXNXT7c9eXJx4kYcu2RZ3z2VTqw0xw932OlrRhcK', -- bcrypt hash of 'admin123'
+    '$2a$12$N.tkB1o539A86O/BexEMSubiouwGWj6cCl3gsRZux5DJDIYCV7caW', -- bcrypt hash of 'admin123'
     datetime('now'),
     datetime('now')
 );
 
--- Create example company for testing
-INSERT OR IGNORE INTO Companies (
-    CompanyId, CompanyName, CompanyEnabled, CompanyCreated, CompanyUpdated
-) VALUES (
-    1, 'Test EV Company', 1, datetime('now'), datetime('now')
-);
-
--- Create example tariff for the company
-INSERT OR IGNORE INTO Tariffs (
-    TariffsId, TariffsCompanyId, TariffsEnabled, TariffsName, TariffsType, TariffsPer,
-    TariffsRateDaytime, TariffsRateNighttime, TariffsDaytimeFrom, TariffsDaytimeTo,
-    TariffsNighttimeFrom, TariffsNighttimeTo, TariffsFixedStartFee,
-    TariffsCreated, TariffsUpdated
-) VALUES (
-    1, 1, 1, 'Standard Pricing', 'Time-of-Use', 'kWh',
-    0.25, 0.15, '08:00:00', '18:00:00',
-    '18:00:00', '08:00:00', 1.00,
-    datetime('now'), datetime('now')
-);
-
--- Create example driver group
-INSERT OR IGNORE INTO DriversGroup (
-    DriversGroupId, DriversGroupCompanyId, DriversGroupName, DriversGroupEnabled,
-    DriverTariffId, DriversGroupCreated, DriversGroupUpdated
-) VALUES (
-    1, 1, 'Standard Drivers', 1, 1, datetime('now'), datetime('now')
-);
-
--- Create example payment method
-INSERT OR IGNORE INTO PaymentMethods (
-    PaymentMethodId, PaymentMethodCompanyId, PaymentMethodName, PaymentMethodEnabled,
-    PaymentMethodCreated, PaymentMethodUpdated
-) VALUES (
-    1, 1, 'Credit Card', 1, datetime('now'), datetime('now')
-);
-
--- Create test admin user for the company
--- Password is 'admin123' - CHANGE THIS IN PRODUCTION!
-INSERT OR IGNORE INTO Users (
-    UserId, UserRoleId, UserFirstName, UserLastName, UserEmail, 
-    UserCompanyId, UserPasswordHash, UserCreated, UserUpdated
-) VALUES (
-    2, 
-    2, -- Admin role
-    'Company', 
-    'Admin', 
-    'admin@testcompany.com',
-    1, -- Test Company
-    '$2b$12$LQv3c1yqBw1XIXVe8gOw9e7iGjB7qhJ.CjvFnQhcnVLLcQQf4wQ6S', -- bcrypt hash of 'admin123'
-    datetime('now'),
-    datetime('now')
-);
-
--- Create test driver user
--- Password is 'driver123' - CHANGE THIS IN PRODUCTION!
-INSERT OR IGNORE INTO Users (
-    UserId, UserRoleId, UserFirstName, UserLastName, UserEmail, 
-    UserCompanyId, UserPasswordHash, UserCreated, UserUpdated
-) VALUES (
-    3, 
-    3, -- Driver role
-    'Test', 
-    'Driver', 
-    'driver@testcompany.com',
-    1, -- Test Company
-    '$2b$12$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', -- bcrypt hash of 'driver123'
-    datetime('now'),
-    datetime('now')
-);
-
--- Create corresponding driver record for the driver user
-INSERT OR IGNORE INTO Drivers (
-    DriverId, DriverCompanyId, DriverEnabled, DriverFullName, DriverEmail, 
-    DriverGroupId, DriverUserId, DriverNotifActions, DriverNotifPayments, 
-    DriverNotifSystem, DriverCreated, DriverUpdated
-) VALUES (
-    1, 1, 1, 'Test Driver', 'driver@testcompany.com',
-    1, 3, 0, 0, 0, datetime('now'), datetime('now')
-);
-
--- Create example site
-INSERT OR IGNORE INTO Sites (
-    SiteId, SiteCompanyID, SiteEnabled, SiteName, SiteAddress, SiteCity, 
-    SiteRegion, SiteCountry, SiteCreated, SiteUpdated
-) VALUES (
-    1, 1, 1, 'Main Office', '123 EV Street', 'Electric City',
-    'CA', 'USA', datetime('now'), datetime('now')
-);
-
--- Create example charger
-INSERT OR IGNORE INTO Chargers (
-    ChargerId, ChargerCompanyId, ChargerSiteId, ChargerName, ChargerEnabled,
-    ChargerBrand, ChargerModel, ChargerType, ChargerIsOnline, ChargerActive24x7,
-    ChargerCreated, ChargerUpdated
-) VALUES (
-    1, 1, 1, 'CHARGER-001', 1,
-    'TestBrand', 'Model-X', 'AC', 0, 1,
-    datetime('now'), datetime('now')
-);
-
--- Create example connector
-INSERT OR IGNORE INTO Connectors (
-    ConnectorId, ConnectorCompanyId, ConnectorSiteId, ConnectorChargerId,
-    ConnectorType, ConnectorEnabled, ConnectorStatus, ConnectorMaxVolt, ConnectorMaxAmp,
-    ConnectorCreated, ConnectorUpdated
-) VALUES (
-    1, 1, 1, 1,
-    'Type2', 1, 'Available', 240.0, 32.0,
-    datetime('now'), datetime('now')
-);
-
--- Create example RFID card for the driver
-INSERT OR IGNORE INTO RFIDCards (
-    RFIDCardId, RFIDCardCompanyId, RFIDCardDriverId, RFIDCardEnabled,
-    RFIDCardNameOn, RFIDCardCreated, RFIDCardUpdated
-) VALUES (
-    'RFID123456789', 1, 1, 1,
-    'Test Driver Card', datetime('now'), datetime('now')
-);
-
--- Additional Indexes for Performance
--- These indexes will improve query performance for common operations
 
 -- Authentication indexes
 CREATE INDEX IF NOT EXISTS idx_users_email ON Users(UserEmail);

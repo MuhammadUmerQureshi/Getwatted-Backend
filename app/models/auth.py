@@ -89,27 +89,11 @@ class UserCreate(BaseModel):
 
 class UserUpdate(BaseModel):
     """Schema for updating a user."""
-    email: Optional[str] = None  # Changed from EmailStr to str
     first_name: Optional[str] = None
     last_name: Optional[str] = None
-    role: Optional[UserRole] = None
     company_id: Optional[int] = None
     phone: Optional[str] = None
-    
-    @field_validator('email')
-    @classmethod
-    def validate_email(cls, v):
-        """Custom email validation that allows .local domains"""
-        if v is None:
-            return v
-        if not v or '@' not in v:
-            raise ValueError('Invalid email format')
-        # Basic email pattern that allows .local and other development domains
-        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$|^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.local$'
-        if not re.match(email_pattern, v):
-            raise ValueError('Invalid email format')
-        
-        return v.lower()
+    password: Optional[str] = None
 
 class User(BaseModel):
     """User model representing a user in the database."""

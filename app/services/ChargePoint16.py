@@ -1,5 +1,5 @@
 """
-Refactored ChargePoint implementation for OCPP 1.6
+Enhanced ChargePoint implementation for OCPP 1.6 with improved payment handling
 """
 import logging
 from datetime import datetime
@@ -44,11 +44,13 @@ from app.db.charge_point_db import (
     update_connector_status,
     get_charger_info,
     check_rfid_authorization,
-    create_charge_session,
-    update_charge_session_on_stop,
+    create_charge_session_with_pricing_and_payment,
+    create_payment_transaction_for_start,
+    update_existing_payment_transaction,
     get_charge_session_info,
     get_meter_start_value,
-    create_charge_session_with_pricing
+    get_default_payment_method,
+    
 )
 
 def setup_logger(logger_name):
@@ -66,7 +68,7 @@ logger = setup_logger("ocpp_charge_point")
 
 class ChargePoint16(cp):
     """
-    ChargePoint implementation for OCPP 1.6
+    Enhanced ChargePoint implementation for OCPP 1.6 with improved payment handling
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -88,25 +90,11 @@ class ChargePoint16(cp):
                 'firmware_version': kwargs.get('firmware_version'),
                 'charger_meter_serial': kwargs.get('meter_serial_number'),
                 'charger_meter': kwargs.get('meter_type'),
-
             }
             
             # Update charger details in database
             update_charger_on_boot(self.id, charger_details)
             
-            # Get charger info for logging event
-            # Dont need to log BootNotification in EventsData
-            #charger_info = get_charger_info(self.id)
-            # if charger_info:
-            #     # Log boot notification event
-            #     log_event(
-            #         charger_info,
-            #         event_type="BootNotification",
-            #         data=kwargs,
-            #         connector_id=None,
-            #         session_id=None
-            #     )
-                
         except Exception as e:
             logger.error(f"❌ DATABASE ERROR: Failed to update boot notification details for {self.id}: {str(e)}")
         
@@ -140,9 +128,8 @@ class ChargePoint16(cp):
         logger.info(f"📊 DETAILS: connector_id={kwargs.get('connector_id', 'N/A')}, status={kwargs.get('status', 'N/A')}, error_code={kwargs.get('error_code', 'N/A')}")
         
         try:
-            #now = datetime.now().isoformat() # Time for reporting connector status
             connector_id = kwargs.get('connector_id') 
-            status = kwargs.get('status') # Only need to update connector status
+            status = kwargs.get('status')
             
             # Get charger info from database
             charger_info = get_charger_info(self.id)
@@ -153,16 +140,6 @@ class ChargePoint16(cp):
             # Update connector status if connector_id is provided and not 0
             if connector_id is not None and connector_id != 0:
                 update_connector_status(charger_info, connector_id, status)
-            
-            # Log status notification event
-            # Dont need to log status notification in EventsData table in database
-            # log_event(
-            #     charger_info, 
-            #     event_type="StatusNotification", 
-            #     data=kwargs,
-            #     connector_id=connector_id,
-            #     session_id=None
-            # )
             
         except Exception as e:
             logger.error(f"❌ DATABASE ERROR: Failed to update status for {self.id}: {str(e)}")
@@ -179,7 +156,7 @@ class ChargePoint16(cp):
             connector_id = kwargs.get('connector_id')
             transaction_id = kwargs.get('transaction_id')
             
-            # Get charger info from database - we know it exists since we received a message
+            # Get charger info from database
             charger_info = get_charger_info(self.id)
             
             # Process meter values in detail
@@ -225,7 +202,6 @@ class ChargePoint16(cp):
                             }
                             
                             # Only store in meter_value if it's specifically Energy.Active.Import.Register
-                            # Otherwise store in the appropriate field
                             if measurand == 'Energy.Active.Import.Register':
                                 meter_data['meter_value'] = parsed_value
                                 
@@ -262,7 +238,6 @@ class ChargePoint16(cp):
                                 meter_data['voltage'] = parsed_value
                             elif measurand == 'Temperature':
                                 meter_data['temperature'] = parsed_value
-                            # Note: We're not storing Power.Active.Import or Energy.Active.Import.Interval in meter_value
                             else:
                                 logger.info(f"📊 Other measurand received: {measurand}, value: {parsed_value}")
                             
@@ -274,7 +249,7 @@ class ChargePoint16(cp):
                                 connector_id=connector_id,
                                 session_id=transaction_id,
                                 timestamp=timestamp,
-                                meter_value=meter_data['meter_value'],  # Will be None for non-energy readings
+                                meter_value=meter_data['meter_value'],
                                 temperature=meter_data['temperature'],
                                 current=meter_data['current'],
                                 voltage=meter_data['voltage']
@@ -308,7 +283,7 @@ class ChargePoint16(cp):
             id_tag = kwargs.get('id_tag')
             now = datetime.now().isoformat()
             
-            # Default authorization status is invalid (changed from accepted)
+            # Default authorization status is invalid
             authorization_status = AuthorizationStatus.invalid
             
             # Get charger info from database
@@ -343,15 +318,6 @@ class ChargePoint16(cp):
                 authorization_status = AuthorizationStatus.invalid
                 logger.info(f"🚫 Authorization rejected: No RFID card ID provided")
             
-            # Log authorization event
-            # Do we need to log this in EventsData table?
-            # log_event(
-            #     charger_info,
-            #     event_type="Authorize",
-            #     data={"id_tag": id_tag, "status": authorization_status},
-            #     connector_id=None,
-            #     session_id=None
-            # )
             logger.info(f"✅ EVENT LOGGED: Authorization for {self.id}, RFID {id_tag}, status {authorization_status}")
             
         except Exception as e:
@@ -372,7 +338,6 @@ class ChargePoint16(cp):
         logger.info(f"▶️ RECEIVED: StartTransaction from {self.id}")
         logger.info(f"▶️ DETAILS: id_tag={kwargs.get('id_tag', 'N/A')}, connector_id={kwargs.get('connector_id', 'N/A')}, meter_start={kwargs.get('meter_start', 'N/A')}")
         
-        # Handle start transaction in database
         try:
             now = datetime.now().isoformat()
             id_tag = kwargs.get('id_tag')
@@ -384,10 +349,19 @@ class ChargePoint16(cp):
             charger_info = get_charger_info(self.id)
             status = check_rfid_authorization(id_tag=id_tag, charger_info=charger_info)
 
+            # If authorization failed, reject the transaction
+            if status != AuthorizationStatus.accepted:
+                logger.warning(f"⚠️ Authorization failed for {id_tag} on {self.id}: {status}")
+                return call_result.StartTransaction(
+                    transaction_id=0,  # 0 indicates rejection
+                    id_tag_info=IdTagInfo(status=status)
+                )
+
             # Find driver ID and pricing information from RFID card
             driver_id = None
             pricing_plan_id = None
             discount_id = None
+            payment_transaction_id = None
             
             if id_tag:
                 # Get driver and pricing information in one query
@@ -397,10 +371,11 @@ class ChargePoint16(cp):
                         r.RFIDCardDriverId as driver_id,
                         dg.DriverTariffId as pricing_plan_id,
                         dg.DriversGroupDiscountId as discount_id,
-                        dg.DriversGroupName as group_name
+                        dg.DriversGroupName as group_name,
+                        r.RFIDCardCompanyId as company_id
                     FROM RFIDCards r
                     INNER JOIN Drivers d ON r.RFIDCardDriverId = d.DriverId
-                    INNER JOIN DriversGroup dg ON d.DriverGroupId = dg.DriversGroupId
+                    LEFT JOIN DriversGroup dg ON d.DriverGroupId = dg.DriversGroupId
                     WHERE r.RFIDCardId = ? AND r.RFIDCardEnabled = 1 AND d.DriverEnabled = 1
                     """,
                     (id_tag,)
@@ -411,21 +386,64 @@ class ChargePoint16(cp):
                     driver_id = pricing_data["driver_id"]
                     pricing_plan_id = pricing_data["pricing_plan_id"]
                     discount_id = pricing_data["discount_id"]
+                    company_id = pricing_data["company_id"]
                     
                     logger.info(f"✅ DRIVER FOUND: Driver ID {driver_id} in group '{pricing_data['group_name']}'")
                     logger.info(f"💰 PRICING INFO: Tariff ID: {pricing_plan_id}, Discount ID: {discount_id}")
+                    
+                    # ENHANCED: Payment method validation and transaction creation
+                    if pricing_plan_id:
+                        # 1. Check if driver/company has valid payment method
+                        payment_method = get_default_payment_method(company_id)
+                        
+                        if not payment_method:
+                            logger.warning(f"⚠️ No payment method found for company {company_id}")
+                            # Reject transaction if payment method is required but not found
+                            return call_result.StartTransaction(
+                                transaction_id=0,
+                                id_tag_info=IdTagInfo(status=AuthorizationStatus.invalid)
+                            )
+                        
+                        # 2. Create payment transaction record (pending completion)
+                        try:
+                            payment_transaction_id = create_payment_transaction_for_start(
+                                driver_id=driver_id,
+                                company_id=company_id,
+                                site_id=charger_info['site_id'],
+                                charger_id=charger_info['charger_id'],
+                                payment_method_id=payment_method,
+                                estimated_amount=0.00,  # Will be calculated at stop
+                                status="pending_completion"
+                            )
+                            
+                            if not payment_transaction_id:
+                                logger.error(f"❌ Failed to create payment transaction for driver {driver_id}")
+                                return call_result.StartTransaction(
+                                    transaction_id=0,
+                                    id_tag_info=IdTagInfo(status=AuthorizationStatus.invalid)
+                                )
+                            
+                            logger.info(f"✅ Payment transaction created: ID {payment_transaction_id}")
+                            
+                        except Exception as e:
+                            logger.error(f"❌ Error creating payment transaction: {str(e)}")
+                            return call_result.StartTransaction(
+                                transaction_id=0,
+                                id_tag_info=IdTagInfo(status=AuthorizationStatus.invalid)
+                            )
                 else:
                     logger.warning(f"⚠️ RFID card {id_tag} not found or driver/group disabled")
             
-            # Create new charge session with pricing information
-            transaction_id = create_charge_session_with_pricing(
+            # Create new charge session with pricing and payment information
+            transaction_id = create_charge_session_with_pricing_and_payment(
                 charger_info, 
                 id_tag, 
                 connector_id, 
                 timestamp, 
                 driver_id,
                 pricing_plan_id,
-                discount_id
+                discount_id,
+                payment_transaction_id
             )
             
             # Update connector status to Charging
@@ -447,7 +465,7 @@ class ChargePoint16(cp):
         except Exception as e:
             logger.error(f"❌ DATABASE ERROR: Failed to process start transaction for {self.id}: {str(e)}")
             # Default values if database error
-            transaction_id = 1
+            transaction_id = 0  # Reject on error
             status = AuthorizationStatus.invalid
         
         id_tag_info = IdTagInfo(status=status)
@@ -457,109 +475,11 @@ class ChargePoint16(cp):
             id_tag_info=id_tag_info
         )
 
-
-    # @on(Action.stop_transaction)
-    # def on_stop_transaction(self, **kwargs):
-    #     logger.info(f"⏹️ RECEIVED: StopTransaction from {self.id}")
-    #     logger.info(f"⏹️ DETAILS: transaction_id={kwargs.get('transaction_id', 'N/A')}, meter_stop={kwargs.get('meter_stop', 'N/A')}, timestamp={kwargs.get('timestamp', 'N/A')}")
-        
-    #     # Handle stop transaction in database
-    #     try:
-    #         now = datetime.now().isoformat()
-    #         transaction_id = kwargs.get('transaction_id')
-    #         meter_stop = kwargs.get('meter_stop', 0)
-    #         timestamp = kwargs.get('timestamp', now)
-    #         reason = kwargs.get('reason')
-            
-    #         # Default response value
-    #         status = AuthorizationStatus.accepted
-            
-    #         # Get charger info directly - we know it exists since we received a message
-    #         charger_info = get_charger_info(self.id)
-            
-    #         # Get session info
-    #         session_info = get_charge_session_info(transaction_id)
-            
-    #         if session_info:
-    #             connector_id = session_info.get('connector_id')
-    #             start_time = session_info.get('start_time')
-                
-    #             # Calculate duration and energy
-    #             try:
-    #                 # Fix for timestamp format issue - handle 'Z' timezone indicator
-    #                 start_time_clean = start_time.replace('Z', '+00:00') if start_time and start_time.endswith('Z') else start_time
-    #                 timestamp_clean = timestamp.replace('Z', '+00:00') if timestamp and timestamp.endswith('Z') else timestamp
-                    
-    #                 # Log the cleaned timestamps for debugging
-    #                 logger.info(f"🕒 Cleaned timestamps - Start: {start_time_clean}, End: {timestamp_clean}")
-                    
-    #                 # Calculate duration
-    #                 start_dt = datetime.fromisoformat(start_time_clean)
-    #                 end_dt = datetime.fromisoformat(timestamp_clean)
-    #                 duration_seconds = int((end_dt - start_dt).total_seconds())
-                    
-    #                 # Get meter start value
-    #                 meter_start = get_meter_start_value(transaction_id)
-                    
-    #                 # Calculate energy used in kWh
-    #                 energy_kwh = (meter_stop - meter_start) / 1000.0  # Convert from Wh to kWh
-                    
-    #                 # Update session record
-    #                 update_success = update_charge_session_on_stop(
-    #                     transaction_id, 
-    #                     timestamp_clean,  # Use the cleaned timestamp 
-    #                     duration_seconds, 
-    #                     reason, 
-    #                     energy_kwh
-    #                 )
-                    
-    #                 if update_success:
-    #                     logger.info(f"✅ CHARGE SESSION UPDATED: ID {transaction_id} for charger {self.id}, duration {duration_seconds}s, energy {energy_kwh} kWh")
-    #                 else:
-    #                     logger.error(f"❌ Failed to update charge session in database")
-                    
-    #                 # Update connector status to Available
-    #                 if connector_id is not None:
-    #                     update_connector_status(charger_info, connector_id, 'Available')
-                        
-    #             except Exception as e:
-    #                 logger.error(f"❌ Error updating session: {str(e)}")
-    #                 logger.error(f"❌ Debug info - Start time: '{start_time}', End time: '{timestamp}'")
-    #         else:
-    #             logger.warning(f"⚠️ Transaction {transaction_id} not found in database")
-            
-    #         # Log stop transaction event with meter stop value
-    #         log_event(
-    #             charger_info,
-    #             event_type="StopTransaction",
-    #             data=kwargs,
-    #             connector_id=None,  # We don't have connector_id directly from kwargs
-    #             session_id=transaction_id,
-    #             timestamp=timestamp,
-    #             meter_value=meter_stop
-    #         )
-    #         logger.info(f"✅ EVENT LOGGED: Stop transaction for {self.id}, transaction {transaction_id}, meter {meter_stop}")
-            
-    #     except Exception as e:
-    #         logger.error(f"❌ DATABASE ERROR: Failed to process stop transaction for {self.id}: {str(e)}")
-    #         logger.error(f"❌ Exception details: {type(e).__name__}, {e.args}")
-    #         # Default value if database error
-    #         status = AuthorizationStatus.accepted
-        
-    #     logger.info(f"⏹️ RESPONSE: StopTransaction.conf with status={status}")
-    #     return call_result.StopTransaction(
-    #         id_tag_info=IdTagInfo(status=status)
-    #     )
-    
-    # Update the on_stop_transaction method in app/services/ChargePoint16.py
-# Replace the existing method with this enhanced version
-
     @on(Action.stop_transaction)
     def on_stop_transaction(self, **kwargs):
         logger.info(f"⏹️ RECEIVED: StopTransaction from {self.id}")
         logger.info(f"⏹️ DETAILS: transaction_id={kwargs.get('transaction_id', 'N/A')}, meter_stop={kwargs.get('meter_stop', 'N/A')}, timestamp={kwargs.get('timestamp', 'N/A')}")
         
-        # Handle stop transaction in database
         try:
             now = datetime.now().isoformat()
             transaction_id = kwargs.get('transaction_id')
@@ -570,7 +490,7 @@ class ChargePoint16(cp):
             # Default response value
             status = AuthorizationStatus.accepted
             
-            # Get charger info directly - we know it exists since we received a message
+            # Get charger info directly
             charger_info = get_charger_info(self.id)
             
             # Get session info
@@ -586,7 +506,6 @@ class ChargePoint16(cp):
                     start_time_clean = start_time.replace('Z', '+00:00') if start_time and start_time.endswith('Z') else start_time
                     timestamp_clean = timestamp.replace('Z', '+00:00') if timestamp and timestamp.endswith('Z') else timestamp
                     
-                    # Log the cleaned timestamps for debugging
                     logger.info(f"🕒 Cleaned timestamps - Start: {start_time_clean}, End: {timestamp_clean}")
                     
                     # Calculate duration
@@ -600,20 +519,19 @@ class ChargePoint16(cp):
                     # Calculate energy used in kWh
                     energy_kwh = (meter_stop - meter_start) / 1000.0  # Convert from Wh to kWh
                     
-                    # Use enhanced update function with payment processing
-                    from app.db.charge_point_db import update_charge_session_on_stop_with_payment
-                    update_success = update_charge_session_on_stop_with_payment(
+                    # SIMPLIFIED: Update existing payment transaction with final cost
+                    update_success = update_existing_payment_transaction(
                         transaction_id, 
-                        timestamp_clean,  # Use the cleaned timestamp 
+                        timestamp_clean,
                         duration_seconds, 
                         reason, 
                         energy_kwh
                     )
                     
                     if update_success:
-                        logger.info(f"✅ CHARGE SESSION UPDATED WITH PAYMENT: ID {transaction_id} for charger {self.id}")
+                        logger.info(f"✅ CHARGE SESSION UPDATED: ID {transaction_id} for charger {self.id}")
                     else:
-                        logger.error(f"❌ Failed to update charge session with payment processing")
+                        logger.error(f"❌ Failed to update charge session")
                     
                     # Update connector status to Available
                     if connector_id is not None:
@@ -630,7 +548,7 @@ class ChargePoint16(cp):
                 charger_info,
                 event_type="StopTransaction",
                 data=kwargs,
-                connector_id=None,  # We don't have connector_id directly from kwargs
+                connector_id=None,
                 session_id=transaction_id,
                 timestamp=timestamp,
                 meter_value=meter_stop
@@ -640,7 +558,6 @@ class ChargePoint16(cp):
         except Exception as e:
             logger.error(f"❌ DATABASE ERROR: Failed to process stop transaction for {self.id}: {str(e)}")
             logger.error(f"❌ Exception details: {type(e).__name__}, {e.args}")
-            # Default value if database error
             status = AuthorizationStatus.accepted
         
         logger.info(f"⏹️ RESPONSE: StopTransaction.conf with status={status}")
@@ -648,6 +565,7 @@ class ChargePoint16(cp):
             id_tag_info=IdTagInfo(status=status)
         )
     
+    # OCPP Remote Commands
     async def change_configuration_req(self, key, value):
         logger.info(f"⚙️ SENDING: ChangeConfiguration to {self.id}")
         logger.info(f"⚙️ DETAILS: key={key}, value={value}")

@@ -39,25 +39,30 @@ async def get_chargers(
     try:
         query = "SELECT * FROM Chargers"
         params = []
+        filters = []
         
         # Apply company filter based on role
         if user.role.value != "SuperAdmin":
             company_id = user.company_id
         
         if company_id is not None:
+            filters.append("ChargerCompanyId = ?")
             params.append(company_id)
             
         if site_id is not None:
+            filters.append("ChargerSiteId = ?")
             params.append(site_id)
             
         if enabled is not None:
+            filters.append("ChargerEnabled = ?")
             params.append(1 if enabled else 0)
             
         if online is not None:
+            filters.append("ChargerIsOnline = ?")
             params.append(1 if online else 0)
             
-        if params:
-            query += " WHERE ChargerCompanyId = ? AND ChargerSiteId = ? AND ChargerEnabled = ? AND ChargerIsOnline = ?"
+        if filters:
+            query += " WHERE " + " AND ".join(filters)
             
         query += " ORDER BY ChargerName"
         
@@ -102,7 +107,7 @@ async def create_charger(
     try:
         # Validate company access
         if user.role.value != "SuperAdmin":
-            if charger.company_id != user.company_id:
+            if charger.ChargerCompanyId != user.company_id:
                 raise HTTPException(
                     status_code=403,
                     detail="You can only create chargers for your own company"
@@ -111,59 +116,59 @@ async def create_charger(
         # Check if company exists
         company = execute_query(
             "SELECT 1 FROM Companies WHERE CompanyId = ?",
-            (charger.company_id,)
+            (charger.ChargerCompanyId,)
         )
         if not company:
             raise HTTPException(
                 status_code=404,
-                detail=f"Company with ID {charger.company_id} not found"
+                detail=f"Company with ID {charger.ChargerCompanyId} not found"
             )
             
         # Check if site exists and belongs to company
-        if charger.site_id:
+        if charger.ChargerSiteId:
             site = execute_query(
                 "SELECT 1 FROM Sites WHERE SiteId = ? AND SiteCompanyID = ?",
-                (charger.site_id, charger.company_id)
+                (charger.ChargerSiteId, charger.ChargerCompanyId)
             )
             if not site:
                 raise HTTPException(
                     status_code=404,
-                    detail=f"Site with ID {charger.site_id} not found or does not belong to company {charger.company_id}"
+                    detail=f"Site with ID {charger.ChargerSiteId} not found or does not belong to company {charger.ChargerCompanyId}"
                 )
         
         # Check if charger name already exists within the site
         existing_charger = execute_query(
             "SELECT 1 FROM Chargers WHERE ChargerCompanyId = ? AND ChargerSiteId = ? AND ChargerName = ?",
-            (charger.company_id, charger.site_id, charger.name)
+            (charger.ChargerCompanyId, charger.ChargerSiteId, charger.ChargerName)
         )
         
         if existing_charger:
             raise HTTPException(
                 status_code=409, 
-                detail=f"Charger with name '{charger.name}' already exists in site {charger.site_id}"
+                detail=f"Charger with name '{charger.ChargerName}' already exists in site {charger.ChargerSiteId}"
             )
             
         # Check if charger ID already exists within the site
         existing_charger_id = execute_query(
             "SELECT 1 FROM Chargers WHERE ChargerId = ? AND ChargerCompanyId = ? AND ChargerSiteId = ?",
-            (charger.charger_id, charger.company_id, charger.site_id)
+            (charger.ChargerId, charger.ChargerCompanyId, charger.ChargerSiteId)
         )
         
         if existing_charger_id:
             raise HTTPException(
                 status_code=409, 
-                detail=f"Charger with ID {charger.charger_id} already exists for company {charger.company_id} and site {charger.site_id}"
+                detail=f"Charger with ID {charger.ChargerId} already exists for company {charger.ChargerCompanyId} and site {charger.ChargerSiteId}"
             )
             
         # Check if payment method exists if provided
-        if charger.charger_payment_method_id:
+        if charger.ChargerPaymentMethodId:
             payment_method = execute_query(
                 "SELECT 1 FROM PaymentMethods WHERE PaymentMethodId = ?", 
-                (charger.charger_payment_method_id,)
+                (charger.ChargerPaymentMethodId,)
             )
             
             if not payment_method:
-                raise HTTPException(status_code=404, detail=f"Payment method with ID {charger.charger_payment_method_id} not found")
+                raise HTTPException(status_code=404, detail=f"Payment method with ID {charger.ChargerPaymentMethodId} not found")
             
         now = datetime.now().isoformat()
         
@@ -180,35 +185,35 @@ async def create_charger(
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                charger.charger_id,
-                charger.company_id,
-                charger.site_id,
-                charger.name,
-                1 if charger.enabled else 0,
-                charger.brand,
-                charger.model,
-                charger.type,
-                charger.serial,
-                charger.meter,
-                charger.meter_serial,
-                charger.pincode,
-                charger.ws_url,
-                charger.iccid,
-                charger.availability,
-                1 if charger.is_online else 0,
-                charger.access_type,
-                1 if charger.active_24x7 else 0,
-                charger.geo_coord,
-                charger.payment_method_id,
-                charger.photo,
-                charger.firmware_version,
+                charger.ChargerId,
+                charger.ChargerCompanyId,
+                charger.ChargerSiteId,
+                charger.ChargerName,
+                charger.ChargerEnabled,
+                charger.ChargerBrand,
+                charger.ChargerModel,
+                charger.ChargerType,
+                charger.ChargerSerial,
+                charger.ChargerMeter,
+                charger.ChargerMeterSerial,
+                charger.ChargerPincode,
+                charger.ChargerWsURL,
+                charger.ChargerICCID,
+                charger.ChargerAvailability,
+                charger.ChargerIsOnline,
+                charger.ChargerAccessType,
+                charger.ChargerActive24x7,
+                charger.ChargerGeoCoord,
+                charger.ChargerPaymentMethodId,
+                charger.ChargerPhoto,
+                charger.ChargerFirmwareVersion,
                 now,
                 now
             )
         )
         
         # Return the created charger
-        return await get_charger(charger.charger_id, charger.company_id, charger.site_id)
+        return await get_charger(charger.ChargerId, charger.ChargerCompanyId, charger.ChargerSiteId)
     except HTTPException:
         raise
     except Exception as e:
@@ -217,7 +222,7 @@ async def create_charger(
             if "ChargerName" in str(e):
                 raise HTTPException(
                     status_code=409, 
-                    detail=f"Charger with name '{charger.name}' already exists in site {charger.site_id}"
+                    detail=f"Charger with name '{charger.ChargerName}' already exists in site {charger.ChargerSiteId}"
                 )
         logger.error(f"Error creating charger: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
@@ -257,22 +262,22 @@ async def update_charger(
                 )
             
             # Prevent changing company for non-superadmins
-            if charger_update.company_id and charger_update.company_id != user.company_id:
+            if charger_update.ChargerCompanyId and charger_update.ChargerCompanyId != user.company_id:
                 raise HTTPException(
                     status_code=403,
                     detail="You cannot change a charger's company"
                 )
             
             # Validate site belongs to company if changing
-            if charger_update.site_id:
+            if charger_update.ChargerSiteId:
                 site = execute_query(
                     "SELECT 1 FROM Sites WHERE SiteId = ? AND SiteCompanyID = ?",
-                    (charger_update.site_id, user.company_id)
+                    (charger_update.ChargerSiteId, user.company_id)
                 )
                 if not site:
                     raise HTTPException(
                         status_code=404,
-                        detail=f"Site with ID {charger_update.site_id} not found or does not belong to your company"
+                        detail=f"Site with ID {charger_update.ChargerSiteId} not found or does not belong to your company"
                     )
         
         # Update charger
@@ -283,25 +288,49 @@ async def update_charger(
                 ChargerCompanyId = ?,
                 ChargerSiteId = ?,
                 ChargerName = ?,
-                ChargerModel = ?,
-                ChargerSerialNumber = ?,
-                ChargerFirmwareVersion = ?,
-                ChargerConnectors = ?,
-                ChargerPower = ?,
                 ChargerEnabled = ?,
+                ChargerBrand = ?,
+                ChargerModel = ?,
+                ChargerType = ?,
+                ChargerSerial = ?,
+                ChargerMeter = ?,
+                ChargerMeterSerial = ?,
+                ChargerPincode = ?,
+                ChargerWsURL = ?,
+                ChargerICCID = ?,
+                ChargerAvailability = ?,
+                ChargerIsOnline = ?,
+                ChargerAccessType = ?,
+                ChargerActive24x7 = ?,
+                ChargerGeoCoord = ?,
+                ChargerPaymentMethodId = ?,
+                ChargerPhoto = ?,
+                ChargerFirmwareVersion = ?,
                 ChargerUpdated = ?
             WHERE ChargerId = ?
             """,
             (
-                charger_update.company_id or current_charger[0]["ChargerCompanyId"],
-                charger_update.site_id or current_charger[0]["ChargerSiteId"],
-                charger_update.name or current_charger[0]["ChargerName"],
-                charger_update.model or current_charger[0]["ChargerModel"],
-                charger_update.serial_number or current_charger[0]["ChargerSerialNumber"],
-                charger_update.firmware_version or current_charger[0]["ChargerFirmwareVersion"],
-                charger_update.connectors or current_charger[0]["ChargerConnectors"],
-                charger_update.power or current_charger[0]["ChargerPower"],
-                charger_update.enabled if charger_update.enabled is not None else current_charger[0]["ChargerEnabled"],
+                charger_update.ChargerCompanyId or current_charger[0]["ChargerCompanyId"],
+                charger_update.ChargerSiteId or current_charger[0]["ChargerSiteId"],
+                charger_update.ChargerName or current_charger[0]["ChargerName"],
+                charger_update.ChargerEnabled if charger_update.ChargerEnabled is not None else current_charger[0]["ChargerEnabled"],
+                charger_update.ChargerBrand or current_charger[0]["ChargerBrand"],
+                charger_update.ChargerModel or current_charger[0]["ChargerModel"],
+                charger_update.ChargerType or current_charger[0]["ChargerType"],
+                charger_update.ChargerSerial or current_charger[0]["ChargerSerial"],
+                charger_update.ChargerMeter or current_charger[0]["ChargerMeter"],
+                charger_update.ChargerMeterSerial or current_charger[0]["ChargerMeterSerial"],
+                charger_update.ChargerPincode or current_charger[0]["ChargerPincode"],
+                charger_update.ChargerWsURL or current_charger[0]["ChargerWsURL"],
+                charger_update.ChargerICCID or current_charger[0]["ChargerICCID"],
+                charger_update.ChargerAvailability or current_charger[0]["ChargerAvailability"],
+                charger_update.ChargerIsOnline if charger_update.ChargerIsOnline is not None else current_charger[0]["ChargerIsOnline"],
+                charger_update.ChargerAccessType or current_charger[0]["ChargerAccessType"],
+                charger_update.ChargerActive24x7 if charger_update.ChargerActive24x7 is not None else current_charger[0]["ChargerActive24x7"],
+                charger_update.ChargerGeoCoord or current_charger[0]["ChargerGeoCoord"],
+                charger_update.ChargerPaymentMethodId or current_charger[0]["ChargerPaymentMethodId"],
+                charger_update.ChargerPhoto or current_charger[0]["ChargerPhoto"],
+                charger_update.ChargerFirmwareVersion or current_charger[0]["ChargerFirmwareVersion"],
                 now,
                 charger_id
             )

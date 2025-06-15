@@ -441,3 +441,36 @@ async def get_tariff_drivers(
     except Exception as e:
         logger.error(f"Error getting drivers for tariff {tariff_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@company_router.get("/{company_id}/tariffs", response_model=List[Tariff])
+async def get_company_tariffs_v2(
+    company_id: int,
+    enabled: Optional[bool] = Query(None, description="Filter by enabled status"),
+    user: UserInToken = Depends(require_admin_or_higher)
+):
+    """
+    Get all tariffs for a specific company.
+    
+    - SuperAdmin: Can see tariffs from any company
+    - Admin: Can only see tariffs from their company
+    - Driver: Not allowed to access this endpoint
+    """
+    try:
+        # Check company access
+        check_company_access(user, company_id)
+
+        query = "SELECT * FROM Tariffs WHERE TariffsCompanyId = ?"
+        params = [company_id]
+        
+        if enabled is not None:
+            query += " AND TariffsEnabled = ?"
+            params.append(1 if enabled else 0)
+            
+        query += " ORDER BY TariffsName"
+        
+        tariffs = execute_query(query, tuple(params))
+        return tariffs or []  # Return empty list if no tariffs found
+        
+    except Exception as e:
+        logger.error(f"Error getting tariffs for company {company_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")

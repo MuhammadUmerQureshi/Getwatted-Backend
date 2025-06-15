@@ -31,6 +31,8 @@ class ChargerCreate(BaseModel):
 
 class ChargerUpdate(BaseModel):
     """Schema for updating a charger."""
+    ChargerCompanyId: Optional[int] = None
+    ChargerSiteId: Optional[int] = None
     ChargerName: Optional[str] = None
     ChargerEnabled: Optional[bool] = None
     ChargerBrand: Optional[str] = None
@@ -64,6 +66,9 @@ class ChargerUpdate(BaseModel):
     ChargerSatTo: Optional[time] = None
     ChargerSunFrom: Optional[time] = None
     ChargerSunTo: Optional[time] = None
+
+    class Config:
+        from_attributes = True
 
 
 class Charger(BaseModel):

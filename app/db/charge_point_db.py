@@ -679,3 +679,247 @@ def update_charge_session_on_stop(transaction_id, timestamp, duration_seconds, r
     except Exception as e:
         logger.error(f"❌ DATABASE ERROR: Failed to update charge session: {str(e)}")
         return False
+    
+
+
+def create_payment_transaction_for_start(driver_id, company_id, site_id, charger_id, payment_method_id, estimated_amount=0.00, status="pending_completion"):
+    """
+    Create a payment transaction at the start of a charging session.
+    
+    Args:
+        driver_id (int): ID of the driver
+        company_id (int): ID of the company
+        site_id (int): ID of the site
+        charger_id (int): ID of the charger
+        payment_method_id (int): ID of the payment method
+        estimated_amount (float): Estimated cost (default 0.00)
+        status (str): Transaction status
+        
+    Returns:
+        int: Payment transaction ID if successful, None otherwise
+    """
+    try:
+        # Get maximum transaction ID and increment by 1
+        max_id_result = execute_query("SELECT MAX(PaymentTransactionId) as max_id FROM PaymentTransactions")
+        new_id = 1
+        if max_id_result and max_id_result[0]['max_id'] is not None:
+            new_id = max_id_result[0]['max_id'] + 1
+            
+        now = datetime.now().isoformat()
+        
+        # Insert new payment transaction
+        execute_insert(
+            """
+            INSERT INTO PaymentTransactions (
+                PaymentTransactionId, PaymentTransactionMethodUsed, PaymentTransactionDriverId,
+                PaymentTransactionDateTime, PaymentTransactionAmount, PaymentTransactionStatus,
+                PaymentTransactionPaymentStatus, PaymentTransactionCompanyId, PaymentTransactionSiteId, 
+                PaymentTransactionChargerId, PaymentTransactionSessionId,
+                PaymentTransactionCreated, PaymentTransactionUpdated
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                new_id,
+                payment_method_id,
+                driver_id,
+                now,
+                estimated_amount,
+                status,
+                "pending",  # Payment status - awaiting completion
+                company_id,
+                site_id,
+                charger_id,
+                None,  # Session ID will be updated later
+                now,
+                now
+            )
+        )
+        
+        logger.info(f"✅ PAYMENT TRANSACTION CREATED: ID {new_id} for driver {driver_id}, estimated amount ${estimated_amount:.2f}")
+        return new_id
+        
+    except Exception as e:
+        logger.error(f"❌ DATABASE ERROR: Failed to create payment transaction: {str(e)}")
+        return None
+
+
+def create_charge_session_with_pricing_and_payment(charger_info, id_tag, connector_id, timestamp, driver_id=None, pricing_plan_id=None, discount_id=None, payment_transaction_id=None):
+    """
+    Enhanced version of create_charge_session_with_pricing that also links payment transaction.
+    
+    Args:
+        charger_info (dict): Dictionary with charger_id, company_id, site_id
+        id_tag (str): The RFID card ID
+        connector_id (int): ID of the connector
+        timestamp (str): Start time of the session
+        driver_id (int, optional): ID of the driver
+        pricing_plan_id (int, optional): ID of the pricing plan/tariff
+        discount_id (int, optional): ID of the discount
+        payment_transaction_id (int, optional): ID of the payment transaction
+        
+    Returns:
+        int: Transaction ID of the new session
+    """
+    try:
+        now = datetime.now().isoformat()
+        charger_id = charger_info['charger_id']
+        company_id = charger_info['company_id']
+        site_id = charger_info['site_id']
+        
+        # Get maximum transaction ID and increment
+        max_session = execute_query("SELECT MAX(ChargeSessionId) as max_id FROM ChargeSessions")
+        transaction_id = 1
+        if max_session and max_session[0]['max_id'] is not None:
+            transaction_id = max_session[0]['max_id'] + 1
+        
+        # Insert new charge session with pricing and payment information
+        execute_insert(
+            """
+            INSERT INTO ChargeSessions (
+                ChargeSessionId, ChargerSessionCompanyId, ChargerSessionSiteId,
+                ChargerSessionChargerId, ChargerSessionConnectorId, ChargerSessionDriverId,
+                ChargerSessionRFIDCard, ChargerSessionStart, ChargerSessionStatus,
+                ChargerSessionPricingPlanId, ChargerSessionDiscountId, ChargerSessionPaymentId,
+                ChargerSessionPaymentStatus, ChargerSessionCreated
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                transaction_id, company_id, site_id, charger_id,
+                connector_id, driver_id, id_tag, timestamp,
+                "Started", pricing_plan_id, discount_id, payment_transaction_id,
+                "pending" if payment_transaction_id else "not_required", now
+            )
+        )
+        
+        # Update payment transaction with session ID
+        if payment_transaction_id:
+            execute_update(
+                """
+                UPDATE PaymentTransactions 
+                SET PaymentTransactionSessionId = ?, PaymentTransactionUpdated = ?
+                WHERE PaymentTransactionId = ?
+                """,
+                (transaction_id, now, payment_transaction_id)
+            )
+            logger.info(f"✅ Payment transaction {payment_transaction_id} linked to session {transaction_id}")
+        
+        # Log the pricing and payment information
+        info_parts = []
+        if pricing_plan_id:
+            info_parts.append(f"Pricing Plan ID: {pricing_plan_id}")
+        if discount_id:
+            info_parts.append(f"Discount ID: {discount_id}")
+        if payment_transaction_id:
+            info_parts.append(f"Payment Transaction ID: {payment_transaction_id}")
+        
+        pricing_info = ", ".join(info_parts) if info_parts else "No pricing/payment info"
+        logger.info(f"✅ CHARGE SESSION CREATED: ID {transaction_id} for charger {charger_id}, connector {connector_id} | {pricing_info}")
+        
+        return transaction_id
+        
+    except Exception as e:
+        logger.error(f"❌ DATABASE ERROR: Failed to create charge session: {str(e)}")
+        return 1  # Default transaction ID
+
+
+def update_existing_payment_transaction(transaction_id, timestamp, duration_seconds, reason, energy_kwh):
+    """
+    Update existing payment transaction with final cost and complete the session.
+    This replaces the complex payment creation logic since payment transaction already exists.
+    
+    Args:
+        transaction_id (int): ID of the charge session
+        timestamp (str): End time of the session
+        duration_seconds (int): Duration in seconds
+        reason (str): Reason for stopping
+        energy_kwh (float): Energy used in kWh
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        # 1. Get session details including existing payment info
+        session = execute_query(
+            """
+            SELECT ChargerSessionPricingPlanId, ChargerSessionStart, 
+                   ChargerSessionCompanyId, ChargerSessionSiteId,
+                   ChargerSessionChargerId, ChargerSessionDriverId,
+                   ChargerSessionPaymentId, ChargerSessionDiscountId
+            FROM ChargeSessions WHERE ChargeSessionId = ?
+            """,
+            (transaction_id,)
+        )
+        
+        if not session:
+            logger.error(f"Session {transaction_id} not found")
+            return False
+            
+        session_data = session[0]
+        cost = 0.0
+        breakdown = {}
+        
+        # 2. Calculate final cost using TariffService if pricing plan exists
+        if session_data["ChargerSessionPricingPlanId"] and energy_kwh > 0:
+            from app.services.tariff_service import TariffService
+            cost, breakdown = TariffService.calculate_session_cost(
+                pricing_plan_id=session_data["ChargerSessionPricingPlanId"],
+                energy_kwh=energy_kwh,
+                session_start=session_data["ChargerSessionStart"],
+                session_end=timestamp
+            )
+            logger.info(f"Session {transaction_id} final cost calculated: ${cost:.2f}")
+        else:
+            logger.info(f"Session {transaction_id} - no pricing plan or zero energy, cost = $0.00")
+        
+        # 3. Update existing payment transaction with final amount
+        payment_transaction_id = session_data["ChargerSessionPaymentId"]
+        payment_status = "not_required"
+        
+        if payment_transaction_id and cost > 0:
+            now = datetime.now().isoformat()
+            execute_update(
+                """
+                UPDATE PaymentTransactions
+                SET PaymentTransactionAmount = ?, PaymentTransactionPaymentStatus = ?, PaymentTransactionUpdated = ?
+                WHERE PaymentTransactionId = ?
+                """,
+                (cost, "completed", now, payment_transaction_id)
+            )
+            payment_status = "completed"
+            logger.info(f"Payment transaction {payment_transaction_id} updated with final amount ${cost:.2f}")
+        elif payment_transaction_id and cost == 0:
+            # Free session - mark as completed
+            now = datetime.now().isoformat()
+            execute_update(
+                """
+                UPDATE PaymentTransactions
+                SET PaymentTransactionAmount = ?, PaymentTransactionPaymentStatus = ?, PaymentTransactionUpdated = ?
+                WHERE PaymentTransactionId = ?
+                """,
+                (0.00, "not_required", now, payment_transaction_id)
+            )
+            payment_status = "not_required"
+            logger.info(f"Payment transaction {payment_transaction_id} marked as not required (free session)")
+        
+        # 4. Update session with final information
+        execute_update(
+            """
+            UPDATE ChargeSessions
+            SET ChargerSessionEnd = ?, ChargerSessionDuration = ?,
+                ChargerSessionReason = ?, ChargerSessionStatus = ?,
+                ChargerSessionEnergyKWH = ?, ChargerSessionCost = ?,
+                ChargerSessionPaymentAmount = ?, ChargerSessionPaymentStatus = ?
+            WHERE ChargeSessionId = ?
+            """,
+            (timestamp, duration_seconds, reason, "Completed", energy_kwh, 
+             cost, cost, payment_status, transaction_id)
+        )
+        
+        logger.info(f"✅ CHARGE SESSION COMPLETED: ID {transaction_id}, duration {duration_seconds}s, energy {energy_kwh} kWh, cost ${cost:.2f}, payment status: {payment_status}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ DATABASE ERROR: Failed to update session with payment: {str(e)}")
+        return False
+
+    

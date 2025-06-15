@@ -31,7 +31,7 @@ async def get_site_groups(
     - Driver: Not allowed to access this endpoint
     """
     try:
-        query = "SELECT * FROM SiteGroups"
+        query = "SELECT * FROM SitesGroup"
         params = []
         filters = []
         
@@ -40,7 +40,7 @@ async def get_site_groups(
             company_id = user.company_id
         
         if company_id is not None:
-            filters.append("SiteGroupCompanyId = ?")
+            filters.append("SiteCompanyId = ?")
             params.append(company_id)
             
         if filters:
@@ -68,7 +68,7 @@ async def get_site_group(
     """
     try:
         site_group = execute_query(
-            "SELECT * FROM SiteGroups WHERE SiteGroupId = ?",
+            "SELECT * FROM SitesGroup WHERE SiteGroupId = ?",
             (site_group_id,)
         )
         
@@ -80,7 +80,7 @@ async def get_site_group(
             
         # Check company access
         if user.role.value != "SuperAdmin":
-            if site_group[0]["SiteGroupCompanyId"] != user.company_id:
+            if site_group[0]["SiteCompanyId"] != user.company_id:
                 raise HTTPException(
                     status_code=403,
                     detail="You can only view site groups from your company"
@@ -108,7 +108,7 @@ async def create_site_group(
     try:
         # Validate company access
         if user.role.value != "SuperAdmin":
-            if site_group.company_id != user.company_id:
+            if site_group.SiteCompanyId != user.company_id:
                 raise HTTPException(
                     status_code=403,
                     detail="You can only create site groups for your own company"
@@ -117,39 +117,34 @@ async def create_site_group(
         # Check if company exists
         company = execute_query(
             "SELECT 1 FROM Companies WHERE CompanyId = ?",
-            (site_group.company_id,)
+            (site_group.SiteCompanyId,)
         )
         if not company:
             raise HTTPException(
                 status_code=404,
-                detail=f"Company with ID {site_group.company_id} not found"
+                detail=f"Company with ID {site_group.SiteCompanyId} not found"
             )
             
-        # Check if site group already exists
-        existing_site_group = execute_query(
-            "SELECT 1 FROM SiteGroups WHERE SiteGroupId = ?",
-            (site_group.site_group_id,)
+        # Get the next available site group ID
+        max_id_result = execute_query(
+            "SELECT MAX(SiteGroupId) as max_id FROM SitesGroup"
         )
-        if existing_site_group:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Site group with ID {site_group.site_group_id} already exists"
-            )
+        next_id = (max_id_result[0]["max_id"] or 0) + 1
             
         # Insert site group
         now = datetime.now().isoformat()
         execute_insert(
             """
-            INSERT INTO SiteGroups (
-                SiteGroupId, SiteGroupCompanyId, SiteGroupName,
-                SiteGroupDescription, SiteGroupCreated, SiteGroupUpdated
+            INSERT INTO SitesGroup (
+                SiteGroupId, SiteCompanyId, SiteGroupName,
+                SiteGroupEnabled, SiteGroupCreated, SiteGroupUpdated
             ) VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
-                site_group.site_group_id,
-                site_group.company_id,
-                site_group.name,
-                site_group.description,
+                next_id,
+                site_group.SiteCompanyId,
+                site_group.SiteGroupName,
+                site_group.SiteGroupEnabled if hasattr(site_group, 'SiteGroupEnabled') else True,
                 now,
                 now
             )
@@ -157,11 +152,11 @@ async def create_site_group(
         
         # Return created site group
         created_site_group = execute_query(
-            "SELECT * FROM SiteGroups WHERE SiteGroupId = ?",
-            (site_group.site_group_id,)
+            "SELECT * FROM SitesGroup WHERE SiteGroupId = ?",
+            (next_id,)
         )
         
-        logger.info(f"✅ Site group created: {site_group.name} by {user.email}")
+        logger.info(f"✅ Site group created: {site_group.SiteGroupName} by {user.email}")
         return created_site_group[0]
         
     except HTTPException:
@@ -186,7 +181,7 @@ async def update_site_group(
     try:
         # Get current site group
         current_site_group = execute_query(
-            "SELECT * FROM SiteGroups WHERE SiteGroupId = ?",
+            "SELECT * FROM SitesGroup WHERE SiteGroupId = ?",
             (site_group_id,)
         )
         
@@ -198,14 +193,14 @@ async def update_site_group(
             
         # Check company access
         if user.role.value != "SuperAdmin":
-            if current_site_group[0]["SiteGroupCompanyId"] != user.company_id:
+            if current_site_group[0]["SiteCompanyId"] != user.company_id:
                 raise HTTPException(
                     status_code=403,
                     detail="You can only update site groups from your company"
                 )
             
             # Prevent changing company for non-superadmins
-            if site_group_update.company_id and site_group_update.company_id != user.company_id:
+            if site_group_update.SiteCompanyId and site_group_update.SiteCompanyId != user.company_id:
                 raise HTTPException(
                     status_code=403,
                     detail="You cannot change a site group's company"
@@ -215,17 +210,17 @@ async def update_site_group(
         now = datetime.now().isoformat()
         execute_update(
             """
-            UPDATE SiteGroups SET
-                SiteGroupCompanyId = ?,
+            UPDATE SitesGroup SET
+                SiteCompanyId = ?,
                 SiteGroupName = ?,
-                SiteGroupDescription = ?,
+                SiteGroupEnabled = ?,
                 SiteGroupUpdated = ?
             WHERE SiteGroupId = ?
             """,
             (
-                site_group_update.company_id or current_site_group[0]["SiteGroupCompanyId"],
-                site_group_update.name or current_site_group[0]["SiteGroupName"],
-                site_group_update.description or current_site_group[0]["SiteGroupDescription"],
+                site_group_update.SiteCompanyId or current_site_group[0]["SiteCompanyId"],
+                site_group_update.SiteGroupName or current_site_group[0]["SiteGroupName"],
+                site_group_update.SiteGroupEnabled if hasattr(site_group_update, 'SiteGroupEnabled') else current_site_group[0]["SiteGroupEnabled"],
                 now,
                 site_group_id
             )
@@ -233,7 +228,7 @@ async def update_site_group(
         
         # Return updated site group
         updated_site_group = execute_query(
-            "SELECT * FROM SiteGroups WHERE SiteGroupId = ?",
+            "SELECT * FROM SitesGroup WHERE SiteGroupId = ?",
             (site_group_id,)
         )
         
@@ -261,7 +256,7 @@ async def delete_site_group(
     try:
         # Get current site group
         current_site_group = execute_query(
-            "SELECT * FROM SiteGroups WHERE SiteGroupId = ?",
+            "SELECT * FROM SitesGroup WHERE SiteGroupId = ?",
             (site_group_id,)
         )
         
@@ -273,7 +268,7 @@ async def delete_site_group(
             
         # Check company access
         if user.role.value != "SuperAdmin":
-            if current_site_group[0]["SiteGroupCompanyId"] != user.company_id:
+            if current_site_group[0]["SiteCompanyId"] != user.company_id:
                 raise HTTPException(
                     status_code=403,
                     detail="You can only delete site groups from your company"
@@ -281,7 +276,7 @@ async def delete_site_group(
         
         # Delete site group
         execute_delete(
-            "DELETE FROM SiteGroups WHERE SiteGroupId = ?",
+            "DELETE FROM SitesGroup WHERE SiteGroupId = ?",
             (site_group_id,)
         )
         
@@ -309,7 +304,7 @@ async def get_company_site_groups(
     - Driver: Not allowed to access this endpoint
     """
     try:
-        query = "SELECT * FROM SiteGroups WHERE SiteGroupCompanyId = ? ORDER BY SiteGroupId"
+        query = "SELECT * FROM SitesGroup WHERE SiteCompanyId = ? ORDER BY SiteGroupId"
         site_groups = execute_query(query, (company_id,))
         return site_groups
         
@@ -333,7 +328,7 @@ async def get_site_group_sites(
     try:
         # Get site group
         site_group = execute_query(
-            "SELECT * FROM SiteGroups WHERE SiteGroupId = ?",
+            "SELECT * FROM SitesGroup WHERE SiteGroupId = ?",
             (site_group_id,)
         )
         
@@ -345,7 +340,7 @@ async def get_site_group_sites(
             
         # Check company access
         if user.role.value != "SuperAdmin":
-            if site_group[0]["SiteGroupCompanyId"] != user.company_id:
+            if site_group[0]["SiteCompanyId"] != user.company_id:
                 raise HTTPException(
                     status_code=403,
                     detail="You can only view sites from your company's site groups"
@@ -353,7 +348,7 @@ async def get_site_group_sites(
         
         # Get sites
         sites = execute_query(
-            "SELECT SiteId FROM SiteGroupMembers WHERE SiteGroupId = ?",
+            "SELECT SiteId FROM Sites WHERE SiteGroupId = ?",
             (site_group_id,)
         )
         return [site["SiteId"] for site in sites]
@@ -380,7 +375,7 @@ async def add_site_to_group(
     try:
         # Get site group
         site_group = execute_query(
-            "SELECT * FROM SiteGroups WHERE SiteGroupId = ?",
+            "SELECT * FROM SitesGroup WHERE SiteGroupId = ?",
             (site_group_id,)
         )
         
@@ -404,7 +399,7 @@ async def add_site_to_group(
             
         # Check company access
         if user.role.value != "SuperAdmin":
-            if site_group[0]["SiteGroupCompanyId"] != user.company_id:
+            if site_group[0]["SiteCompanyId"] != user.company_id:
                 raise HTTPException(
                     status_code=403,
                     detail="You can only add sites to your company's site groups"
@@ -417,8 +412,8 @@ async def add_site_to_group(
         
         # Check if site is already in group
         existing = execute_query(
-            "SELECT 1 FROM SiteGroupMembers WHERE SiteGroupId = ? AND SiteId = ?",
-            (site_group_id, site_id)
+            "SELECT 1 FROM Sites WHERE SiteId = ? AND SiteGroupId = ?",
+            (site_id, site_group_id)
         )
         if existing:
             raise HTTPException(
@@ -426,9 +421,9 @@ async def add_site_to_group(
                 detail=f"Site {site_id} is already in group {site_group_id}"
             )
         
-        # Add site to group
-        execute_insert(
-            "INSERT INTO SiteGroupMembers (SiteGroupId, SiteId) VALUES (?, ?)",
+        # Update site's group
+        execute_update(
+            "UPDATE Sites SET SiteGroupId = ? WHERE SiteId = ?",
             (site_group_id, site_id)
         )
         
@@ -457,7 +452,7 @@ async def remove_site_from_group(
     try:
         # Get site group
         site_group = execute_query(
-            "SELECT * FROM SiteGroups WHERE SiteGroupId = ?",
+            "SELECT * FROM SitesGroup WHERE SiteGroupId = ?",
             (site_group_id,)
         )
         
@@ -481,7 +476,7 @@ async def remove_site_from_group(
             
         # Check company access
         if user.role.value != "SuperAdmin":
-            if site_group[0]["SiteGroupCompanyId"] != user.company_id:
+            if site_group[0]["SiteCompanyId"] != user.company_id:
                 raise HTTPException(
                     status_code=403,
                     detail="You can only remove sites from your company's site groups"
@@ -492,21 +487,10 @@ async def remove_site_from_group(
                     detail="You can only remove sites from your company"
                 )
         
-        # Check if site is in group
-        existing = execute_query(
-            "SELECT 1 FROM SiteGroupMembers WHERE SiteGroupId = ? AND SiteId = ?",
-            (site_group_id, site_id)
-        )
-        if not existing:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Site {site_id} is not in group {site_group_id}"
-            )
-        
         # Remove site from group
-        execute_delete(
-            "DELETE FROM SiteGroupMembers WHERE SiteGroupId = ? AND SiteId = ?",
-            (site_group_id, site_id)
+        execute_update(
+            "UPDATE Sites SET SiteGroupId = NULL WHERE SiteId = ? AND SiteGroupId = ?",
+            (site_id, site_group_id)
         )
         
         logger.info(f"✅ Site {site_id} removed from group {site_group_id} by {user.email}")
@@ -535,7 +519,7 @@ async def get_company_site_groups(
         # Check company access
         check_company_access(user, company_id)
 
-        query = "SELECT * FROM SiteGroups WHERE SiteGroupCompanyId = ?"
+        query = "SELECT * FROM SitesGroup WHERE SiteCompanyId = ?"
         params = [company_id]
         
         if enabled is not None:

@@ -1,12 +1,13 @@
 # app/api/auth_routes.py
 from fastapi import APIRouter, HTTPException, Depends, status
-from typing import List
+from typing import List, Optional
 import logging
+from datetime import datetime
 
-from app.models.auth import LoginRequest, LoginResponse, UserInfo, UserCreate, User, UserInToken
+from app.models.auth import LoginRequest, LoginResponse, UserInfo, UserCreate, User, UserInToken, UserUpdate
 from app.services.auth_service import AuthService
-from app.dependencies.auth import require_super_admin, get_current_user
-from app.db.database import execute_query, execute_insert
+from app.dependencies.auth import require_super_admin, get_current_user, require_admin_or_higher, require_any_authenticated_user, check_company_access
+from app.db.database import execute_query, execute_insert, execute_delete
 
 router = APIRouter(prefix="/api/v1/auth", tags=["AUTHENTICATION"])
 logger = logging.getLogger("ocpp.auth")
@@ -110,14 +111,16 @@ async def get_current_user_info(user: UserInToken = Depends(get_current_user)):
 @router.post("/create-user", response_model=User, status_code=status.HTTP_201_CREATED)
 async def create_user(
     user_data: UserCreate,
-    current_user: UserInToken = Depends(require_super_admin)
+    current_user: UserInToken = Depends(require_admin_or_higher)
 ):
     """
-    Create a new user (SuperAdmin only).
+    Create a new user.
+    - SuperAdmin can create any type of user
+    - Admin can only create Driver users for their company
     
     Args:
         user_data: User creation data
-        current_user: Current user (must be SuperAdmin)
+        current_user: Current user (must be Admin or SuperAdmin)
         
     Returns:
         Created user information
@@ -135,14 +138,38 @@ async def create_user(
                 detail=f"User with email {user_data.email} already exists"
             )
         
-        # Validate company exists for Admin/Driver roles
-        if user_data.role != "SuperAdmin":
-            if not user_data.company_id:
+        # Role and company validation based on current user's role
+        if current_user.role.value == "Admin":
+            # Admin can only create Driver users
+            if user_data.role.value != "Driver":
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"{user_data.role} users must have a company_id"
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Admins can only create Driver users"
                 )
             
+            # Admin can only create users for their company
+            if user_data.company_id != current_user.company_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Admins can only create users for their own company"
+                )
+        elif current_user.role.value == "SuperAdmin":
+            # SuperAdmin can create any role except SuperAdmin
+            if user_data.role.value == "SuperAdmin":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Cannot create SuperAdmin users through this endpoint"
+                )
+            
+            # Validate company exists for Admin/Driver roles
+            if user_data.role.value != "SuperAdmin" and not user_data.company_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"{user_data.role.value} users must have a company_id"
+                )
+        
+        # Validate company exists
+        if user_data.company_id:
             company = execute_query(
                 "SELECT CompanyId FROM Companies WHERE CompanyId = ?",
                 (user_data.company_id,)
@@ -178,7 +205,6 @@ async def create_user(
             new_id = max_id_result[0]['max_id'] + 1
         
         # Insert user
-        from datetime import datetime
         now = datetime.now().isoformat()
         
         execute_insert(
@@ -231,24 +257,34 @@ async def logout(user: UserInToken = Depends(get_current_user)):
     return {"message": "Successfully logged out"}
 
 @router.get("/users", response_model=List[User])
-async def list_users(current_user: UserInToken = Depends(require_super_admin)):
+async def list_users(current_user: UserInToken = Depends(require_admin_or_higher)):
     """
-    List all users (SuperAdmin only).
+    List users.
+    - SuperAdmin can list all users
+    - Admin can only list users from their company
     
     Returns:
-        List of all users
+        List of users
     """
     try:
-        users = execute_query(
-            """
+        # Base query
+        query = """
             SELECT u.UserId, u.UserEmail, u.UserFirstName, u.UserLastName,
                    u.UserPhone, u.UserCompanyId, ur.UserRoleName,
                    u.UserCreated, u.UserUpdated
             FROM Users u
             INNER JOIN UserRoles ur ON u.UserRoleId = ur.UserRoleId
-            ORDER BY u.UserCreated DESC
-            """
-        )
+        """
+        
+        # Add company filter for Admin users
+        params = []
+        if current_user.role.value == "Admin":
+            query += " WHERE u.UserCompanyId = ?"
+            params.append(current_user.company_id)
+        
+        query += " ORDER BY u.UserCreated DESC"
+        
+        users = execute_query(query, tuple(params))
         
         return [
             User(
@@ -270,4 +306,245 @@ async def list_users(current_user: UserInToken = Depends(require_super_admin)):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve users"
+        )
+
+@router.put("/users/{user_id}", response_model=User)
+async def update_user(
+    user_id: int,
+    user_data: UserUpdate,
+    current_user: UserInToken = Depends(require_any_authenticated_user)
+):
+    """
+    Update user information.
+    
+    Args:
+        user_id: ID of user to update
+        user_data: Updated user information
+        current_user: Current authenticated user
+        
+    Returns:
+        Updated user information
+    """
+    try:
+        # Check if user exists and get their current data
+        existing_user = execute_query(
+            """
+            SELECT u.UserId, u.UserEmail, u.UserRoleId, ur.UserRoleName, u.UserCompanyId
+            FROM Users u
+            INNER JOIN UserRoles ur ON u.UserRoleId = ur.UserRoleId
+            WHERE u.UserId = ?
+            """,
+            (user_id,)
+        )
+        
+        if not existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User with ID {user_id} not found"
+            )
+        
+        existing_user = existing_user[0]
+        
+        # Check permissions:
+        # 1. Users can update their own info
+        # 2. SuperAdmin can update anyone
+        # 3. Admin can only update users in their company
+        # 4. Driver can only update their own info
+        if current_user.user_id != user_id:  # Not updating self
+            if current_user.role.value == "Driver":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Drivers can only update their own information"
+                )
+            elif current_user.role.value == "Admin":
+                # Admin can only update users in their company
+                if existing_user["UserCompanyId"] != current_user.company_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Admins can only update users in their company"
+                    )
+        
+        # Validate company exists if company_id is being updated
+        if user_data.company_id is not None:
+            # Only SuperAdmin can change company_id
+            if current_user.role.value != "SuperAdmin":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Only SuperAdmin can change user's company"
+                )
+            
+            company = execute_query(
+                "SELECT CompanyId FROM Companies WHERE CompanyId = ?",
+                (user_data.company_id,)
+            )
+            
+            if not company:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Company with ID {user_data.company_id} not found"
+                )
+        
+        # Update user
+        update_fields = []
+        update_values = []
+        
+        if user_data.first_name is not None:
+            update_fields.append("UserFirstName = ?")
+            update_values.append(user_data.first_name)
+        
+        if user_data.last_name is not None:
+            update_fields.append("UserLastName = ?")
+            update_values.append(user_data.last_name)
+        
+        if user_data.phone is not None:
+            update_fields.append("UserPhone = ?")
+            update_values.append(user_data.phone)
+        
+        if user_data.company_id is not None:
+            update_fields.append("UserCompanyId = ?")
+            update_values.append(user_data.company_id)
+        
+        if user_data.password is not None:
+            # Only SuperAdmin or the user themselves can change password
+            if current_user.role.value != "SuperAdmin" and current_user.user_id != user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Only SuperAdmin or the user themselves can change password"
+                )
+            update_fields.append("UserPasswordHash = ?")
+            update_values.append(AuthService.hash_password(user_data.password))
+        
+        if not update_fields:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No fields to update"
+            )
+        
+        update_fields.append("UserUpdated = ?")
+        update_values.append(datetime.now().isoformat())
+        update_values.append(user_id)
+        
+        execute_insert(
+            f"""
+            UPDATE Users 
+            SET {', '.join(update_fields)}
+            WHERE UserId = ?
+            """,
+            tuple(update_values)
+        )
+        
+        # Get updated user
+        updated_user = execute_query(
+            """
+            SELECT u.UserId, u.UserEmail, u.UserFirstName, u.UserLastName,
+                   u.UserPhone, u.UserCompanyId, ur.UserRoleName,
+                   u.UserCreated, u.UserUpdated
+            FROM Users u
+            INNER JOIN UserRoles ur ON u.UserRoleId = ur.UserRoleId
+            WHERE u.UserId = ?
+            """,
+            (user_id,)
+        )[0]
+        
+        logger.info(f"✅ User updated: {updated_user['UserEmail']} by {current_user.email} ({current_user.role})")
+        
+        return User(
+            user_id=updated_user["UserId"],
+            email=updated_user["UserEmail"],
+            first_name=updated_user["UserFirstName"],
+            last_name=updated_user["UserLastName"],
+            role=updated_user["UserRoleName"],
+            company_id=updated_user["UserCompanyId"],
+            phone=updated_user["UserPhone"],
+            created_at=updated_user["UserCreated"],
+            updated_at=updated_user["UserUpdated"]
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error updating user: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update user"
+        )
+
+@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user(
+    user_id: int,
+    current_user: UserInToken = Depends(require_admin_or_higher)
+):
+    """
+    Delete a user (Admin or SuperAdmin only).
+    
+    Args:
+        user_id: ID of user to delete
+        current_user: Current user (must be Admin or SuperAdmin)
+    """
+    try:
+        # Check if user exists and get their current data
+        existing_user = execute_query(
+            """
+            SELECT u.UserId, u.UserEmail, u.UserCompanyId, ur.UserRoleName
+            FROM Users u
+            INNER JOIN UserRoles ur ON u.UserRoleId = ur.UserRoleId
+            WHERE u.UserId = ?
+            """,
+            (user_id,)
+        )
+        
+        if not existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User with ID {user_id} not found"
+            )
+        
+        existing_user = existing_user[0]
+        
+        # Check permissions:
+        # 1. Users cannot delete themselves
+        # 2. SuperAdmin can delete anyone
+        # 3. Admin can only delete users in their company
+        if user_id == current_user.user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot delete your own account"
+            )
+        
+        if current_user.role.value == "Admin":
+            # Admin can only delete users in their company
+            if existing_user["UserCompanyId"] != current_user.company_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Admins can only delete users in their company"
+                )
+            
+            # Admin cannot delete SuperAdmin users
+            if existing_user["UserRoleName"] == "SuperAdmin":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Admins cannot delete SuperAdmin users"
+                )
+        
+        # Delete user
+        rows_affected = execute_delete(
+            "DELETE FROM Users WHERE UserId = ?",
+            (user_id,)
+        )
+        
+        if rows_affected <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to delete user"
+            )
+        
+        logger.info(f"✅ User deleted: {existing_user['UserEmail']} by {current_user.email} ({current_user.role})")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error deleting user: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete user"
         )

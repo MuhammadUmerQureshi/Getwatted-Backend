@@ -32,27 +32,81 @@ async def get_driver_groups(
     - Driver: Not allowed to access this endpoint
     """
     try:
-        query = "SELECT * FROM DriverGroups"
+        logger.info(f"Getting driver groups for user {user.email} (role: {user.role.value})")
+        logger.info(f"Company ID filter: {company_id}")
+        
+        query = "SELECT * FROM DriversGroup"
         params = []
         filters = []
         
         # Apply company filter based on role
         if user.role.value != "SuperAdmin":
             company_id = user.company_id
+            logger.info(f"Non-superadmin user, using company_id from user: {company_id}")
         
         if company_id is not None:
-            filters.append("DriverGroupCompanyId = ?")
+            filters.append("DriversGroupCompanyId = ?")
             params.append(company_id)
             
         if filters:
             query += f" WHERE {' AND '.join(filters)}"
             
-        query += " ORDER BY DriverGroupId"
+        query += " ORDER BY DriversGroupId"
+        
+        logger.info(f"Executing query: {query}")
+        logger.info(f"Query params: {params}")
         
         driver_groups = execute_query(query, tuple(params) if params else None)
-        return driver_groups
+        
+        if driver_groups is None:
+            logger.error("Database query returned None")
+            raise HTTPException(status_code=500, detail="Database error: Query returned None")
+            
+        logger.info(f"Found {len(driver_groups)} driver groups")
+        
+        # Process and validate each driver group
+        processed_groups = []
+        for group in driver_groups:
+            try:
+                # Convert to dict and ensure proper types
+                group_data = dict(group)
+                
+                # Ensure DriversGroupId is an integer
+                if group_data["DriversGroupId"] is None:
+                    logger.error(f"Found driver group with null ID: {group_data}")
+                    continue
+                    
+                group_data["DriversGroupId"] = int(group_data["DriversGroupId"])
+                
+                # Convert boolean values
+                group_data["DriversGroupEnabled"] = bool(group_data["DriversGroupEnabled"])
+                
+                # Convert nullable fields
+                if group_data["DriversGroupDiscountId"] is not None:
+                    group_data["DriversGroupDiscountId"] = int(group_data["DriversGroupDiscountId"])
+                if group_data["DriverTariffId"] is not None:
+                    group_data["DriverTariffId"] = int(group_data["DriverTariffId"])
+                if group_data["DriversGroupCompanyId"] is not None:
+                    group_data["DriversGroupCompanyId"] = int(group_data["DriversGroupCompanyId"])
+                
+                processed_groups.append(group_data)
+                
+            except (ValueError, TypeError) as e:
+                logger.error(f"Error processing driver group data: {str(e)}", exc_info=True)
+                logger.error(f"Problematic group data: {group}")
+                continue
+        
+        if not processed_groups:
+            logger.warning("No valid driver groups found after processing")
+            return []
+            
+        logger.info(f"Successfully processed {len(processed_groups)} driver groups")
+        return processed_groups
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error getting driver groups: {str(e)}")
+        logger.error(f"Error getting driver groups: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @router.get("/{driver_group_id}", response_model=DriverGroup)
@@ -68,31 +122,56 @@ async def get_driver_group(
     - Driver: Not allowed to access this endpoint
     """
     try:
+        logger.info(f"Getting driver group {driver_group_id} for user {user.email} (role: {user.role.value})")
+        
+        # Validate driver_group_id
+        if driver_group_id <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid driver group ID. Must be a positive integer."
+            )
+        
+        # Get driver group with detailed logging
+        logger.info(f"Executing query for driver group {driver_group_id}")
         driver_group = execute_query(
-            "SELECT * FROM DriverGroups WHERE DriverGroupId = ?",
+            "SELECT * FROM DriversGroup WHERE DriversGroupId = ?",
             (driver_group_id,)
         )
         
         if not driver_group:
+            logger.warning(f"Driver group {driver_group_id} not found")
             raise HTTPException(
                 status_code=404,
                 detail=f"Driver group with ID {driver_group_id} not found"
             )
             
+        # Log the found driver group structure
+        logger.info(f"Found driver group: {driver_group[0]}")
+            
         # Check company access
         if user.role.value != "SuperAdmin":
-            if driver_group[0]["DriverGroupCompanyId"] != user.company_id:
+            if driver_group[0]["DriversGroupCompanyId"] != user.company_id:
+                logger.warning(f"User {user.email} attempted to access driver group {driver_group_id} from company {driver_group[0]['DriversGroupCompanyId']}")
                 raise HTTPException(
                     status_code=403,
                     detail="You can only view driver groups from your company"
                 )
         
-        return driver_group[0]
+        # Convert boolean values from SQLite (0/1) to Python bool
+        driver_group_data = dict(driver_group[0])
+        driver_group_data["DriversGroupEnabled"] = bool(driver_group_data["DriversGroupEnabled"])
+        
+        logger.info(f"Successfully retrieved driver group {driver_group_id}")
+        return driver_group_data
+        
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting driver group {driver_group_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        logger.error(f"Error getting driver group {driver_group_id}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error: {str(e)}"
+        )
 
 @router.post("/", response_model=DriverGroup, status_code=201)
 async def create_driver_group(
@@ -107,9 +186,12 @@ async def create_driver_group(
     - Driver: Not allowed to access this endpoint
     """
     try:
+        logger.info(f"Creating driver group for user {user.email} (role: {user.role.value})")
+        logger.info(f"Driver group data: {driver_group.dict()}")
+        
         # Validate company access
         if user.role.value != "SuperAdmin":
-            if driver_group.company_id != user.company_id:
+            if driver_group.DriversGroupCompanyId != user.company_id:
                 raise HTTPException(
                     status_code=403,
                     detail="You can only create driver groups for your own company"
@@ -118,57 +200,105 @@ async def create_driver_group(
         # Check if company exists
         company = execute_query(
             "SELECT 1 FROM Companies WHERE CompanyId = ?",
-            (driver_group.company_id,)
+            (driver_group.DriversGroupCompanyId,)
         )
         if not company:
             raise HTTPException(
                 status_code=404,
-                detail=f"Company with ID {driver_group.company_id} not found"
+                detail=f"Company with ID {driver_group.DriversGroupCompanyId} not found"
             )
             
-        # Check if driver group already exists
-        existing_driver_group = execute_query(
-            "SELECT 1 FROM DriverGroups WHERE DriverGroupId = ?",
-            (driver_group.driver_group_id,)
+        # Check if driver group name already exists for this company
+        existing_group = execute_query(
+            "SELECT 1 FROM DriversGroup WHERE DriversGroupCompanyId = ? AND DriversGroupName = ?",
+            (driver_group.DriversGroupCompanyId, driver_group.DriversGroupName)
         )
-        if existing_driver_group:
+        if existing_group:
             raise HTTPException(
                 status_code=409,
-                detail=f"Driver group with ID {driver_group.driver_group_id} already exists"
+                detail=f"Driver group with name '{driver_group.DriversGroupName}' already exists for this company"
             )
             
         # Insert driver group
         now = datetime.now().isoformat()
-        execute_insert(
-            """
-            INSERT INTO DriverGroups (
-                DriverGroupId, DriverGroupCompanyId, DriverGroupName,
-                DriverGroupDescription, DriverGroupCreated, DriverGroupUpdated
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                driver_group.driver_group_id,
-                driver_group.company_id,
-                driver_group.name,
-                driver_group.description,
-                now,
-                now
+        try:
+            last_id = execute_insert(
+                """
+                INSERT INTO DriversGroup (
+                    DriversGroupCompanyId, DriversGroupName,
+                    DriversGroupEnabled, DriversGroupDiscountId,
+                    DriverTariffId, DriversGroupCreated, DriversGroupUpdated
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    driver_group.DriversGroupCompanyId,
+                    driver_group.DriversGroupName,
+                    1 if driver_group.DriversGroupEnabled else 0,  # Convert boolean to int
+                    driver_group.DriversGroupDiscountId,
+                    driver_group.DriverTariffId,
+                    now,
+                    now
+                )
             )
-        )
-        
-        # Return created driver group
-        created_driver_group = execute_query(
-            "SELECT * FROM DriverGroups WHERE DriverGroupId = ?",
-            (driver_group.driver_group_id,)
-        )
-        
-        logger.info(f"✅ Driver group created: {driver_group.name} by {user.email}")
-        return created_driver_group[0]
+            
+            logger.info(f"Inserted driver group with last_id: {last_id}")
+            
+            if last_id == -1:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to create driver group: Database returned no ID"
+                )
+            
+            # Get the newly created driver group
+            new_driver_group = execute_query(
+                """
+                SELECT 
+                    DriversGroupId,
+                    DriversGroupCompanyId,
+                    DriversGroupName,
+                    DriversGroupEnabled,
+                    DriversGroupDiscountId,
+                    DriverTariffId,
+                    DriversGroupCreated,
+                    DriversGroupUpdated
+                FROM DriversGroup 
+                WHERE DriversGroupId = ?
+                """,
+                (last_id,)
+            )
+            
+            if not new_driver_group:
+                logger.error(f"Failed to retrieve created driver group with ID {last_id}")
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to retrieve created driver group"
+                )
+            
+            # Convert the row to a dict and ensure proper types
+            driver_group_data = dict(new_driver_group[0])
+            driver_group_data["DriversGroupEnabled"] = bool(driver_group_data["DriversGroupEnabled"])
+            
+            if driver_group_data["DriversGroupDiscountId"] is not None:
+                driver_group_data["DriversGroupDiscountId"] = int(driver_group_data["DriversGroupDiscountId"])
+            if driver_group_data["DriverTariffId"] is not None:
+                driver_group_data["DriverTariffId"] = int(driver_group_data["DriverTariffId"])
+            if driver_group_data["DriversGroupCompanyId"] is not None:
+                driver_group_data["DriversGroupCompanyId"] = int(driver_group_data["DriversGroupCompanyId"])
+            
+            logger.info(f"✅ Driver group created successfully: {driver_group_data}")
+            return driver_group_data
+            
+        except Exception as e:
+            logger.error(f"Error during driver group creation: {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create driver group: {str(e)}"
+            )
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error creating driver group: {str(e)}")
+        logger.error(f"Error creating driver group: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @router.put("/{driver_group_id}", response_model=DriverGroup)
@@ -187,7 +317,7 @@ async def update_driver_group(
     try:
         # Get current driver group
         current_driver_group = execute_query(
-            "SELECT * FROM DriverGroups WHERE DriverGroupId = ?",
+            "SELECT * FROM DriversGroup WHERE DriversGroupId = ?",
             (driver_group_id,)
         )
         
@@ -199,34 +329,29 @@ async def update_driver_group(
             
         # Check company access
         if user.role.value != "SuperAdmin":
-            if current_driver_group[0]["DriverGroupCompanyId"] != user.company_id:
+            if current_driver_group[0]["DriversGroupCompanyId"] != user.company_id:
                 raise HTTPException(
                     status_code=403,
                     detail="You can only update driver groups from your company"
-                )
-            
-            # Prevent changing company for non-superadmins
-            if driver_group_update.company_id and driver_group_update.company_id != user.company_id:
-                raise HTTPException(
-                    status_code=403,
-                    detail="You cannot change a driver group's company"
                 )
         
         # Update driver group
         now = datetime.now().isoformat()
         execute_update(
             """
-            UPDATE DriverGroups SET
-                DriverGroupCompanyId = ?,
-                DriverGroupName = ?,
-                DriverGroupDescription = ?,
-                DriverGroupUpdated = ?
-            WHERE DriverGroupId = ?
+            UPDATE DriversGroup SET
+                DriversGroupName = ?,
+                DriversGroupEnabled = ?,
+                DriversGroupDiscountId = ?,
+                DriverTariffId = ?,
+                DriversGroupUpdated = ?
+            WHERE DriversGroupId = ?
             """,
             (
-                driver_group_update.company_id or current_driver_group[0]["DriverGroupCompanyId"],
-                driver_group_update.name or current_driver_group[0]["DriverGroupName"],
-                driver_group_update.description or current_driver_group[0]["DriverGroupDescription"],
+                driver_group_update.DriversGroupName or current_driver_group[0]["DriversGroupName"],
+                1 if driver_group_update.DriversGroupEnabled else 0 if driver_group_update.DriversGroupEnabled is not None else current_driver_group[0]["DriversGroupEnabled"],
+                driver_group_update.DriversGroupDiscountId if driver_group_update.DriversGroupDiscountId is not None else current_driver_group[0]["DriversGroupDiscountId"],
+                driver_group_update.DriverTariffId if driver_group_update.DriverTariffId is not None else current_driver_group[0]["DriverTariffId"],
                 now,
                 driver_group_id
             )
@@ -234,7 +359,7 @@ async def update_driver_group(
         
         # Return updated driver group
         updated_driver_group = execute_query(
-            "SELECT * FROM DriverGroups WHERE DriverGroupId = ?",
+            "SELECT * FROM DriversGroup WHERE DriversGroupId = ?",
             (driver_group_id,)
         )
         
@@ -262,7 +387,7 @@ async def delete_driver_group(
     try:
         # Get current driver group
         current_driver_group = execute_query(
-            "SELECT * FROM DriverGroups WHERE DriverGroupId = ?",
+            "SELECT * FROM DriversGroup WHERE DriversGroupId = ?",
             (driver_group_id,)
         )
         
@@ -274,7 +399,7 @@ async def delete_driver_group(
             
         # Check company access
         if user.role.value != "SuperAdmin":
-            if current_driver_group[0]["DriverGroupCompanyId"] != user.company_id:
+            if current_driver_group[0]["DriversGroupCompanyId"] != user.company_id:
                 raise HTTPException(
                     status_code=403,
                     detail="You can only delete driver groups from your company"
@@ -282,7 +407,7 @@ async def delete_driver_group(
         
         # Delete driver group
         execute_delete(
-            "DELETE FROM DriverGroups WHERE DriverGroupId = ?",
+            "DELETE FROM DriversGroup WHERE DriversGroupId = ?",
             (driver_group_id,)
         )
         
@@ -313,14 +438,14 @@ async def get_company_driver_groups(
         # Check company access
         check_company_access(user, company_id)
 
-        query = "SELECT * FROM DriverGroups WHERE DriverGroupCompanyId = ?"
+        query = "SELECT * FROM DriversGroup WHERE DriversGroupCompanyId = ?"
         params = [company_id]
         
         if enabled is not None:
-            query += " AND DriverGroupEnabled = ?"
+            query += " AND DriversGroupEnabled = ?"
             params.append(1 if enabled else 0)
             
-        query += " ORDER BY DriverGroupName"
+        query += " ORDER BY DriversGroupName"
         
         groups = execute_query(query, tuple(params))
         return groups
@@ -345,7 +470,7 @@ async def get_driver_group_drivers(
     try:
         # Get driver group
         driver_group = execute_query(
-            "SELECT * FROM DriverGroups WHERE DriverGroupId = ?",
+            "SELECT * FROM DriversGroup WHERE DriversGroupId = ?",
             (driver_group_id,)
         )
         
@@ -357,15 +482,15 @@ async def get_driver_group_drivers(
             
         # Check company access
         if user.role.value != "SuperAdmin":
-            if driver_group[0]["DriverGroupCompanyId"] != user.company_id:
+            if driver_group[0]["DriversGroupCompanyId"] != user.company_id:
                 raise HTTPException(
                     status_code=403,
                     detail="You can only view drivers from your company's driver groups"
                 )
         
-        # Get drivers
+        # Get drivers from the Drivers table
         drivers = execute_query(
-            "SELECT DriverId FROM DriverGroupMembers WHERE DriverGroupId = ?",
+            "SELECT DriverId FROM Drivers WHERE DriverGroupId = ?",
             (driver_group_id,)
         )
         return [driver["DriverId"] for driver in drivers]
@@ -392,7 +517,7 @@ async def add_driver_to_group(
     try:
         # Get driver group
         driver_group = execute_query(
-            "SELECT * FROM DriverGroups WHERE DriverGroupId = ?",
+            "SELECT * FROM DriversGroup WHERE DriversGroupId = ?",
             (driver_group_id,)
         )
         
@@ -416,7 +541,7 @@ async def add_driver_to_group(
             
         # Check company access
         if user.role.value != "SuperAdmin":
-            if driver_group[0]["DriverGroupCompanyId"] != user.company_id:
+            if driver_group[0]["DriversGroupCompanyId"] != user.company_id:
                 raise HTTPException(
                     status_code=403,
                     detail="You can only add drivers to your company's driver groups"
@@ -427,21 +552,23 @@ async def add_driver_to_group(
                     detail="You can only add drivers from your company"
                 )
         
-        # Check if driver is already in group
-        existing = execute_query(
-            "SELECT 1 FROM DriverGroupMembers WHERE DriverGroupId = ? AND DriverId = ?",
-            (driver_group_id, driver_id)
-        )
-        if existing:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Driver {driver_id} is already in group {driver_group_id}"
-            )
+        # Check if driver is already in a group
+        if driver[0]["DriverGroupId"] is not None:
+            if driver[0]["DriverGroupId"] == driver_group_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Driver {driver_id} is already in group {driver_group_id}"
+                )
+            else:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Driver {driver_id} is already in another group"
+                )
         
-        # Add driver to group
-        execute_insert(
-            "INSERT INTO DriverGroupMembers (DriverGroupId, DriverId) VALUES (?, ?)",
-            (driver_group_id, driver_id)
+        # Add driver to group by updating the Drivers table
+        execute_update(
+            "UPDATE Drivers SET DriverGroupId = ?, DriverUpdated = ? WHERE DriverId = ?",
+            (driver_group_id, datetime.now().isoformat(), driver_id)
         )
         
         logger.info(f"✅ Driver {driver_id} added to group {driver_group_id} by {user.email}")
@@ -469,7 +596,7 @@ async def remove_driver_from_group(
     try:
         # Get driver group
         driver_group = execute_query(
-            "SELECT * FROM DriverGroups WHERE DriverGroupId = ?",
+            "SELECT * FROM DriversGroup WHERE DriversGroupId = ?",
             (driver_group_id,)
         )
         
@@ -493,7 +620,7 @@ async def remove_driver_from_group(
             
         # Check company access
         if user.role.value != "SuperAdmin":
-            if driver_group[0]["DriverGroupCompanyId"] != user.company_id:
+            if driver_group[0]["DriversGroupCompanyId"] != user.company_id:
                 raise HTTPException(
                     status_code=403,
                     detail="You can only remove drivers from your company's driver groups"
@@ -504,21 +631,17 @@ async def remove_driver_from_group(
                     detail="You can only remove drivers from your company"
                 )
         
-        # Check if driver is in group
-        existing = execute_query(
-            "SELECT 1 FROM DriverGroupMembers WHERE DriverGroupId = ? AND DriverId = ?",
-            (driver_group_id, driver_id)
-        )
-        if not existing:
+        # Check if driver is in the specified group
+        if driver[0]["DriverGroupId"] != driver_group_id:
             raise HTTPException(
                 status_code=404,
                 detail=f"Driver {driver_id} is not in group {driver_group_id}"
             )
         
-        # Remove driver from group
-        execute_delete(
-            "DELETE FROM DriverGroupMembers WHERE DriverGroupId = ? AND DriverId = ?",
-            (driver_group_id, driver_id)
+        # Remove driver from group by updating the Drivers table
+        execute_update(
+            "UPDATE Drivers SET DriverGroupId = NULL, DriverUpdated = ? WHERE DriverId = ?",
+            (datetime.now().isoformat(), driver_id)
         )
         
         logger.info(f"✅ Driver {driver_id} removed from group {driver_group_id} by {user.email}")

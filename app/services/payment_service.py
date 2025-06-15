@@ -10,8 +10,6 @@ from app.models.payment_method import PaymentTransactionCreate
 
 logger = logging.getLogger("ocpp.payment")
 
-# Configure Stripe (you should set this in environment variables)
-# stripe.api_key = "your_stripe_secret_key_here"
 
 class PaymentService:
     """Service for handling payment operations with Stripe integration."""
@@ -27,7 +25,8 @@ class PaymentService:
         currency: str = "usd",
         description: Optional[str] = None,
         session_id: Optional[int] = None,
-        driver_id: Optional[int] = None
+        driver_id: Optional[int] = None,
+        company_id: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Create a Stripe payment intent.
