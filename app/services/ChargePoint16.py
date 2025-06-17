@@ -391,18 +391,18 @@ class ChargePoint16(cp):
                     logger.info(f"✅ DRIVER FOUND: Driver ID {driver_id} in group '{pricing_data['group_name']}'")
                     logger.info(f"💰 PRICING INFO: Tariff ID: {pricing_plan_id}, Discount ID: {discount_id}")
                     
-                    # ENHANCED: Payment method validation and transaction creation
+                    # # ENHANCED: Payment method validation and transaction creation
                     if pricing_plan_id:
                         # 1. Check if driver/company has valid payment method
                         payment_method = get_default_payment_method(company_id)
                         
-                        if not payment_method:
-                            logger.warning(f"⚠️ No payment method found for company {company_id}")
-                            # Reject transaction if payment method is required but not found
-                            return call_result.StartTransaction(
-                                transaction_id=0,
-                                id_tag_info=IdTagInfo(status=AuthorizationStatus.invalid)
-                            )
+                    #     if not payment_method:
+                    #         logger.warning(f"⚠️ No payment method found for company {company_id}")
+                    #         # Reject transaction if payment method is required but not found
+                    #         return call_result.StartTransaction(
+                    #             transaction_id=0,
+                    #             id_tag_info=IdTagInfo(status=AuthorizationStatus.invalid)
+                    #         )
                         
                         # 2. Create payment transaction record (pending completion)
                         try:
