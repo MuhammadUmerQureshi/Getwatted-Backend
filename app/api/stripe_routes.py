@@ -33,6 +33,23 @@ class CreatePaymentIntentResponse(BaseModel):
     payment_intent_id: str
     status: str = "created"
 
+# Additional Pydantic models
+class CreateCustomerRequest(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+
+class SavePaymentMethodRequest(BaseModel):
+    payment_method_id: str
+    set_as_default: bool = False
+
+class CreatePaymentIntentWithCustomerRequest(BaseModel):
+    amount: float
+    currency: str = "usd"
+    description: Optional[str] = None
+    session_id: Optional[int] = None
+    payment_method_id: Optional[str] = None
+    save_payment_method: bool = False
+
 # Set your Stripe webhook secret here - REPLACE WITH YOUR ACTUAL SECRET
 WEBHOOK_SECRET = "whsec_DXsICWF7x2vcEXkQMBUUmjeESlLPJsZP"
 
@@ -299,4 +316,284 @@ async def stripe_webhook(request: Request):
     except Exception as e:
         logger.error(f"❌ Webhook processing error: {str(e)}")
         raise HTTPException(status_code=500, detail="Webhook processing failed")
+
+# Customer management endpoints
+@router.post("/customers")
+async def create_customer(
+    request: CreateCustomerRequest,
+    user: UserInToken = Depends(get_current_user)
+):
+    """
+    Create a Stripe customer for the current user.
+    """
+    try:
+        customer_id = await PaymentService.create_or_get_customer(
+            user_id=user.user_id,
+            email=user.email,
+            first_name=request.first_name,
+            last_name=request.last_name
+        )
+        
+        return {"customer_id": customer_id, "status": "created"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error creating customer: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/customers/me")
+async def get_my_customer(user: UserInToken = Depends(get_current_user)):
+    """
+    Get current user's Stripe customer information.
+    """
+    try:
+        existing_customer = execute_query(
+            """
+            SELECT UserStripeCustomerStripeCustomerId 
+            FROM UserStripeCustomers 
+            WHERE UserStripeCustomerUserId = ?
+            """,
+            (user.user_id,)
+        )
+        
+        if existing_customer:
+            return {
+                "customer_id": existing_customer[0]["UserStripeCustomerStripeCustomerId"],
+                "exists": True
+            }
+        else:
+            return {"exists": False}
+            
+    except Exception as e:
+        logger.error(f"❌ Error getting customer: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Payment method management endpoints
+@router.post("/payment-methods")
+async def save_payment_method(
+    request: SavePaymentMethodRequest,
+    user: UserInToken = Depends(get_current_user)
+):
+    """
+    Save a payment method for the current user.
+    """
+    try:
+        # Get or create customer
+        customer_id = await PaymentService.create_or_get_customer(
+            user_id=user.user_id,
+            email=user.email
+        )
+        
+        # Save payment method
+        result = await PaymentService.save_payment_method(
+            user_id=user.user_id,
+            customer_id=customer_id,
+            payment_method_id=request.payment_method_id,
+            set_as_default=request.set_as_default
+        )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error saving payment method: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/payment-methods")
+async def get_saved_payment_methods(user: UserInToken = Depends(get_current_user)):
+    """
+    Get all saved payment methods for the current user.
+    """
+    try:
+        payment_methods = await PaymentService.get_saved_payment_methods(user.user_id)
+        return {"payment_methods": payment_methods}
+        
+    except Exception as e:
+        logger.error(f"❌ Error getting payment methods: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/payment-methods/{payment_method_id}")
+async def delete_payment_method(
+    payment_method_id: str,
+    user: UserInToken = Depends(get_current_user)
+):
+    """
+    Delete a saved payment method.
+    """
+    try:
+        # Verify payment method belongs to user
+        existing_pm = execute_query(
+            """
+            SELECT SavedPaymentMethodId 
+            FROM SavedPaymentMethods 
+            WHERE SavedPaymentMethodUserId = ? AND SavedPaymentMethodStripePaymentMethodId = ?
+            """,
+            (user.user_id, payment_method_id)
+        )
+        
+        if not existing_pm:
+            raise HTTPException(
+                status_code=404,
+                detail="Payment method not found or does not belong to user"
+            )
+        
+        await PaymentService.delete_saved_payment_method(user.user_id, payment_method_id)
+        return {"status": "deleted"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error deleting payment method: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/payment-methods/{payment_method_id}/default")
+async def set_default_payment_method(
+    payment_method_id: str,
+    user: UserInToken = Depends(get_current_user)
+):
+    """
+    Set a payment method as default.
+    """
+    try:
+        # Verify payment method belongs to user
+        existing_pm = execute_query(
+            """
+            SELECT SavedPaymentMethodId 
+            FROM SavedPaymentMethods 
+            WHERE SavedPaymentMethodUserId = ? AND SavedPaymentMethodStripePaymentMethodId = ?
+            """,
+            (user.user_id, payment_method_id)
+        )
+        
+        if not existing_pm:
+            raise HTTPException(
+                status_code=404,
+                detail="Payment method not found or does not belong to user"
+            )
+        
+        # Update all to non-default first
+        execute_update(
+            """
+            UPDATE SavedPaymentMethods 
+            SET SavedPaymentMethodIsDefault = FALSE 
+            WHERE SavedPaymentMethodUserId = ?
+            """,
+            (user.user_id,)
+        )
+        
+        # Set this one as default
+        execute_update(
+            """
+            UPDATE SavedPaymentMethods 
+            SET SavedPaymentMethodIsDefault = TRUE 
+            WHERE SavedPaymentMethodUserId = ? AND SavedPaymentMethodStripePaymentMethodId = ?
+            """,
+            (user.user_id, payment_method_id)
+        )
+        
+        return {"status": "updated"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error setting default payment method: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Enhanced payment intent creation with customer and save option
+@router.post("/create-payment-intent-with-customer", response_model=CreatePaymentIntentResponse)
+async def create_payment_intent_with_customer(
+    request: CreatePaymentIntentWithCustomerRequest,
+    user: UserInToken = Depends(get_current_user)
+):
+    """
+    Create a payment intent with customer support and optional payment method saving.
+    """
+    try:
+        # Get or create customer
+        customer_id = await PaymentService.create_or_get_customer(
+            user_id=user.user_id,
+            email=user.email
+        )
+        
+        # If saving payment method, create intent optimized for saving
+        if request.save_payment_method:
+            result = await PaymentService.create_payment_intent_for_saving(
+                customer_id=customer_id,
+                amount=request.amount,
+                currency=request.currency,
+                description=request.description,
+                session_id=request.session_id
+            )
+        else:
+            # Create regular payment intent with customer
+            result = await PaymentService.create_payment_intent_with_customer(
+                customer_id=customer_id,
+                amount=request.amount,
+                currency=request.currency,
+                description=request.description,
+                payment_method_id=request.payment_method_id,
+                session_id=request.session_id
+            )
+        
+        # Link to existing payment transaction if session_id provided
+        if request.session_id:
+            existing_transaction = execute_query(
+                """
+                SELECT PaymentTransactionId 
+                FROM PaymentTransactions 
+                WHERE PaymentTransactionSessionId = ?
+                """,
+                (request.session_id,)
+            )
+            
+            if existing_transaction:
+                transaction_id = existing_transaction[0]["PaymentTransactionId"]
+                execute_update(
+                    """
+                    UPDATE PaymentTransactions 
+                    SET PaymentTransactionStripeIntentId = ?, PaymentTransactionUpdated = ?
+                    WHERE PaymentTransactionId = ?
+                    """,
+                    (result['payment_intent_id'], datetime.now().isoformat(), transaction_id)
+                )
+        
+        return CreatePaymentIntentResponse(
+            client_secret=result['client_secret'],
+            payment_intent_id=result['payment_intent_id'],
+            status="created"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error creating payment intent with customer: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Add new endpoint for saving payment method after successful payment
+@router.post("/save-payment-method-from-intent")
+async def save_payment_method_from_intent(
+    payment_intent_id: str,
+    set_as_default: bool = False,
+    user: UserInToken = Depends(get_current_user)
+):
+    """
+    Save payment method from a completed payment intent.
+    This should be called after a successful payment when the user opted to save their card.
+    """
+    try:
+        result = await PaymentService.save_payment_method_from_intent(
+            user_id=user.user_id,
+            payment_intent_id=payment_intent_id,
+            set_as_default=set_as_default
+        )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error saving payment method from intent: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 

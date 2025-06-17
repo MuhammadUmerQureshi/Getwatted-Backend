@@ -464,6 +464,59 @@ CREATE INDEX IF NOT EXISTS idx_chargers_company_site ON Chargers(ChargerCompanyI
 CREATE INDEX IF NOT EXISTS idx_connectors_company_site_charger ON Connectors(ConnectorCompanyId, ConnectorSiteId, ConnectorChargerId);
 CREATE INDEX IF NOT EXISTS idx_events_company_site_charger ON EventsData(EventsDataCompanyId, EventsDataSiteId, EventsDataChargerId);
 
+-- SQLite Schema for storing Stripe customer and payment method relationships
+
+-- Store Stripe customer IDs for users
+CREATE TABLE UserStripeCustomers (
+    UserStripeCustomerId INTEGER PRIMARY KEY AUTOINCREMENT,
+    UserStripeCustomerUserId INTEGER NOT NULL,
+    UserStripeCustomerStripeCustomerId TEXT NOT NULL,
+    UserStripeCustomerCreated TEXT DEFAULT (datetime('now')),
+    UserStripeCustomerUpdated TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (UserStripeCustomerUserId) REFERENCES Users(UserId),
+    UNIQUE(UserStripeCustomerUserId),
+    UNIQUE(UserStripeCustomerStripeCustomerId)
+);
+
+-- Store saved payment methods
+CREATE TABLE SavedPaymentMethods (
+    SavedPaymentMethodId INTEGER PRIMARY KEY AUTOINCREMENT,
+    SavedPaymentMethodUserId INTEGER NOT NULL,
+    SavedPaymentMethodStripePaymentMethodId TEXT NOT NULL,
+    SavedPaymentMethodCardBrand TEXT,
+    SavedPaymentMethodCardLastFour TEXT,
+    SavedPaymentMethodCardExpMonth INTEGER,
+    SavedPaymentMethodCardExpYear INTEGER,
+    SavedPaymentMethodIsDefault INTEGER DEFAULT 0,
+    SavedPaymentMethodCreated TEXT DEFAULT (datetime('now')),
+    SavedPaymentMethodUpdated TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (SavedPaymentMethodUserId) REFERENCES Users(UserId),
+    UNIQUE(SavedPaymentMethodStripePaymentMethodId)
+);
+
+-- Create triggers to update the 'Updated' timestamp
+CREATE TRIGGER update_user_stripe_customers_timestamp 
+    AFTER UPDATE ON UserStripeCustomers
+BEGIN
+    UPDATE UserStripeCustomers 
+    SET UserStripeCustomerUpdated = datetime('now') 
+    WHERE UserStripeCustomerId = NEW.UserStripeCustomerId;
+END;
+
+CREATE TRIGGER update_saved_payment_methods_timestamp 
+    AFTER UPDATE ON SavedPaymentMethods
+BEGIN
+    UPDATE SavedPaymentMethods 
+    SET SavedPaymentMethodUpdated = datetime('now') 
+    WHERE SavedPaymentMethodId = NEW.SavedPaymentMethodId;
+END;
+
+-- Add indexes for better performance
+CREATE INDEX idx_user_stripe_customers_user_id ON UserStripeCustomers(UserStripeCustomerUserId);
+CREATE INDEX idx_saved_payment_methods_user_id ON SavedPaymentMethods(SavedPaymentMethodUserId);
+CREATE INDEX idx_saved_payment_methods_default ON SavedPaymentMethods(SavedPaymentMethodUserId, SavedPaymentMethodIsDefault);
+
+
 -- Comments for documentation
 -- This schema enforces the following unique constraints:
 -- 1. Company names are globally unique
