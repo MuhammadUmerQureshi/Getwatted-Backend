@@ -883,9 +883,9 @@ def update_existing_payment_transaction(transaction_id, timestamp, duration_seco
                 SET PaymentTransactionAmount = ?, PaymentTransactionPaymentStatus = ?, PaymentTransactionUpdated = ?
                 WHERE PaymentTransactionId = ?
                 """,
-                (cost, "completed", now, payment_transaction_id)
+                (cost, "pending", now, payment_transaction_id)
             )
-            payment_status = "completed"
+            payment_status = "pending"
             logger.info(f"Payment transaction {payment_transaction_id} updated with final amount ${cost:.2f}")
         elif payment_transaction_id and cost == 0:
             # Free session - mark as completed
